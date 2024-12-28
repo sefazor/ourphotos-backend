@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Welcome to OurPhotos!</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            padding: 20px 0;
+        }
+        .content {
+            background: #f9f9f9;
+            padding: 20px;
+            border-radius: 5px;
+        }
+        .footer {
+            text-align: center;
+            padding: 20px 0;
+            color: #666;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Welcome to OurPhotos!</h1>
+    </div>
+    <div class="content">
+        <p>Hi {{.FullName}},</p>
+        <p>Welcome to OurPhotos! We're excited to have you on board.</p>
+        <p>With OurPhotos, you can:</p>
+        <ul>
+            <li>Share your photos with friends and family</li>
+            <li>Create beautiful albums</li>
+            <li>Access your photos from anywhere</li>
+        </ul>
+        <p>Start sharing your memories today!</p>
+    </div>
+    <div class="footer">
+        <p>© {{.Year}} OurPhotos. All rights reserved.</p>
+        <p>This email was sent to {{.Email}}</p>
+    </div>
+</body>
+</html> 
