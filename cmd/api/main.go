@@ -103,7 +103,12 @@ func main() {
 	app := fiber.New()
 
 	// Global Middleware'ler önce tanımlanmalı
-	app.Use(cors.New())
+	app.Use(cors.New(cors.Config{
+		AllowOrigins:     "https://ourphotos.co, https://www.ourphotos.co, http://localhost:5173",
+		AllowHeaders:     "Origin, Content-Type, Accept, Authorization",
+		AllowMethods:     "GET, POST, PUT, DELETE",
+		AllowCredentials: true,
+	}))
 	app.Use(logger.New())
 	app.Use(limiter.New(limiter.Config{
 		Max:        20,
