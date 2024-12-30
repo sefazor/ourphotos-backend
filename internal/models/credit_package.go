@@ -6,8 +6,9 @@ type CreditPackage struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Name        string    `json:"name" gorm:"not null"`
 	Description string    `json:"description"`
-	EventLimit  int       `json:"event_limit" gorm:"not null;default:0"`
-	PhotoLimit  int       `json:"photo_limit" gorm:"not null;default:0"`
+	Credits     int       `json:"credits" gorm:"not null"`
+	EventLimit  int       `json:"event_limit" gorm:"not null"`
+	PhotoLimit  int       `json:"photo_limit" gorm:"not null"`
 	Price       float64   `json:"price" gorm:"not null"`
 	IsActive    bool      `json:"is_active" gorm:"default:true"`
 	CreatedAt   time.Time `json:"created_at"`

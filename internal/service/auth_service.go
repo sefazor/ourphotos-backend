@@ -9,9 +9,9 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/sefazor/ourphotos-backend/internal/models"
 	"github.com/sefazor/ourphotos-backend/internal/repository"
+	"github.com/sefazor/ourphotos-backend/pkg/bcrypt"
 	"github.com/sefazor/ourphotos-backend/pkg/email"
 	jwtPkg "github.com/sefazor/ourphotos-backend/pkg/jwt"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthService struct {
@@ -41,7 +41,7 @@ func (s *AuthService) Register(req models.RegisterRequest) (*models.AuthResponse
 	}
 
 	// Şifreyi hashle
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.HashPassword(req.Password)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +58,7 @@ func (s *AuthService) Register(req models.RegisterRequest) (*models.AuthResponse
 	}
 
 	// JWT token oluştur
-	token, err := jwtPkg.GenerateToken(user.Email)
+	token, err := jwtPkg.GenerateToken(user.Email, user.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -73,24 +73,27 @@ func (s *AuthService) Register(req models.RegisterRequest) (*models.AuthResponse
 }
 
 func (s *AuthService) Login(req models.LoginRequest) (*models.AuthResponse, error) {
-	// Get user by email
 	user, err := s.userRepo.GetByEmail(req.Email)
 	if err != nil {
 		return nil, errors.New("invalid email or password")
 	}
 
-	// Check password
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+	fmt.Printf("\nLogin Debug:\n")
+	fmt.Printf("User Email: %s\n", req.Email)
+	fmt.Printf("Stored Hash: %s\n", user.Password)
+
+	// Şifre karşılaştırma - ComparePassword kullanıyoruz
+	if err := bcrypt.ComparePassword(user.Password, req.Password); err != nil {
+		fmt.Printf("Login failed: %v\n", err)
 		return nil, errors.New("invalid email or password")
 	}
 
-	// Generate token with user_id
-	token, err := s.generateToken(user)
+	// JWT token oluştur
+	token, err := jwtPkg.GenerateToken(user.Email, user.ID)
 	if err != nil {
-		return nil, fmt.Errorf("failed to generate token: %v", err)
+		return nil, fmt.Errorf("token generation failed: %v", err)
 	}
 
-	// Return AuthResponse
 	return &models.AuthResponse{
 		Token: token,
 		User:  *user,
@@ -104,12 +107,14 @@ func (s *AuthService) ForgotPassword(email string) error {
 	}
 
 	// Reset token oluştur
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.RegisteredClaims{
-		Subject:   user.Email,
-		ExpiresAt: jwt.NewNumericDate(time.Now().Add(15 * time.Minute)),
-		IssuedAt:  jwt.NewNumericDate(time.Now()),
-		Issuer:    s.jwtIssuer,
-	})
+	claims := jwt.MapClaims{
+		"sub": user.Email,
+		"exp": time.Now().Add(15 * time.Minute).Unix(),
+		"iat": time.Now().Unix(),
+		"iss": s.jwtIssuer,
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
 	resetToken, err := token.SignedString(s.jwtSecret)
 	if err != nil {
@@ -138,29 +143,53 @@ func (s *AuthService) generateToken(user *models.User) (string, error) {
 
 // Reset token ile şifre değiştirme
 func (s *AuthService) ResetPassword(token string, newPassword string) error {
-	// Token'ı doğrula
-	claims := &jwt.RegisteredClaims{}
-	parsedToken, err := jwt.ParseWithClaims(token, claims, func(t *jwt.Token) (interface{}, error) {
-		return s.jwtSecret, nil
-	})
-
-	if err != nil || !parsedToken.Valid {
-		return errors.New("invalid or expired token")
-	}
-
-	// Token'dan email'i al
-	email := claims.Subject
-	user, err := s.userRepo.GetByEmail(email)
+	claims, err := jwtPkg.ValidateToken(token)
 	if err != nil {
-		return errors.New("user not found")
+		return fmt.Errorf("token validation failed: %v", err)
 	}
 
-	// Yeni şifreyi hashle
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	email, ok := claims["sub"].(string)
+	if !ok {
+		return errors.New("invalid token claims")
+	}
+
+	user, err := s.userRepo.GetByEmail(email)
 	if err != nil {
 		return err
 	}
 
+	fmt.Printf("\nReset Password Debug:\n")
+	fmt.Printf("User Email: %s\n", email)
+	fmt.Printf("New Password: %s\n", newPassword)
+
+	// Yeni şifreyi hashle
+	hashedPassword, err := bcrypt.HashPassword(newPassword)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Generated Hash: %s\n", hashedPassword)
+
+	// Debug için
+	bcrypt.DebugHashAndCompare(newPassword)
+
 	// Şifreyi güncelle
-	return s.userRepo.UpdatePassword(user.ID, string(hashedPassword))
+	if err := s.userRepo.UpdatePassword(user.ID, hashedPassword); err != nil {
+		return err
+	}
+
+	// Doğrulama
+	updatedUser, err := s.userRepo.GetByEmail(email)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("Stored Hash: %s\n", updatedUser.Password)
+
+	// Test et - ComparePassword kullanıyoruz
+	if err := bcrypt.ComparePassword(updatedUser.Password, newPassword); err != nil {
+		fmt.Printf("Verification Error: %v\n", err)
+		return fmt.Errorf("password verification failed: %v", err)
+	}
+
+	fmt.Printf("Password reset successful!\n")
+	return nil
 }

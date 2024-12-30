@@ -154,3 +154,24 @@ func (s *PaymentService) GetCreditPackages() ([]models.CreditPackage, error) {
 func (s *PaymentService) GetUserPurchaseHistory(userID uint) ([]models.UserCreditPurchase, error) {
 	return s.purchaseRepo.GetUserPurchaseHistory(userID)
 }
+
+func (s *PaymentService) ProcessSuccessfulPayment(userID uint, packageID uint) error {
+	// Paketi bul
+	pkg, err := s.packageRepo.GetByID(packageID)
+	if err != nil {
+		return err
+	}
+
+	// Kullanıcıyı bul
+	user, err := s.userRepo.GetByID(userID)
+	if err != nil {
+		return err
+	}
+
+	// Limitleri güncelle
+	user.EventLimit += pkg.EventLimit
+	user.PhotoLimit += pkg.PhotoLimit
+
+	// Kullanıcıyı güncelle
+	return s.userRepo.Update(user)
+}

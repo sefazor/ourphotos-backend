@@ -8,30 +8,22 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-func GenerateToken(email string) (string, error) {
-	// JWT secret key'i environment'tan al
+func GenerateToken(email string, userID uint) (string, error) {
 	secretKey := []byte(os.Getenv("JWT_SECRET"))
 
-	// Token claims'lerini oluştur
 	claims := jwt.MapClaims{
-		"email": email,
-		"exp":   time.Now().Add(time.Hour * 24 * 7).Unix(), // 7 gün
-		"iat":   time.Now().Unix(),
+		"email":   email,
+		"sub":     email,
+		"user_id": userID,
+		"exp":     time.Now().Add(time.Hour * 24 * 7).Unix(),
+		"iat":     time.Now().Unix(),
 	}
 
-	// Token oluştur
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	// Token'ı imzala
-	tokenString, err := token.SignedString(secretKey)
-	if err != nil {
-		return "", err
-	}
-
-	return tokenString, nil
+	return token.SignedString(secretKey)
 }
 
-func ValidateToken(tokenString string) (string, error) {
+func ValidateToken(tokenString string) (jwt.MapClaims, error) {
 	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
 		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 			return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
@@ -40,19 +32,12 @@ func ValidateToken(tokenString string) (string, error) {
 	})
 
 	if err != nil {
-		return "", err
+		return nil, err
 	}
 
 	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		if exp, ok := claims["exp"].(float64); ok {
-			if time.Now().Unix() > int64(exp) {
-				return "", fmt.Errorf("token expired")
-			}
-		}
-		if email, ok := claims["email"].(string); ok {
-			return email, nil
-		}
+		return claims, nil
 	}
 
-	return "", fmt.Errorf("invalid token")
+	return nil, fmt.Errorf("invalid token")
 }

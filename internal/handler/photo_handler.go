@@ -4,195 +4,115 @@ import (
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/sefazor/ourphotos-backend/internal/controller"
 	"github.com/sefazor/ourphotos-backend/internal/models"
+	"github.com/sefazor/ourphotos-backend/internal/service"
 )
 
 type PhotoHandler struct {
-	photoController *controller.PhotoController
-	userController  *controller.UserController
-	eventController *controller.EventController
+	photoService *service.PhotoService
 }
 
-func NewPhotoHandler(photoController *controller.PhotoController, userController *controller.UserController, eventController *controller.EventController) *PhotoHandler {
+func NewPhotoHandler(photoService *service.PhotoService) *PhotoHandler {
 	return &PhotoHandler{
-		photoController: photoController,
-		userController:  userController,
-		eventController: eventController,
+		photoService: photoService,
 	}
-}
-
-func (h *PhotoHandler) UploadPhoto(c *fiber.Ctx) error {
-	// Get event_id from form
-	eventIDStr := c.FormValue("event_id")
-	if eventIDStr == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"error":   "Event ID is required",
-		})
-	}
-
-	eventID, err := strconv.ParseUint(eventIDStr, 10, 32)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"error":   "Invalid event ID",
-		})
-	}
-
-	// Get user_id from JWT (optional for public events)
-	var userID uint = 0
-	userIDInterface := c.Locals("user_id")
-	if userIDInterface != nil {
-		userID, _ = userIDInterface.(uint)
-	}
-
-	// Get file from form
-	file, err := c.FormFile("photo")
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"error":   "Photo is required",
-		})
-	}
-
-	// Check if event allows guest uploads if no user is authenticated
-	if userID == 0 {
-		event, err := h.eventController.GetEvent(uint(eventID))
-		if err != nil {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{
-				"success": false,
-				"error":   "Event not found",
-			})
-		}
-
-		if !event.IsPublic || !event.AllowGuestUploads {
-			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-				"success": false,
-				"error":   "This event does not allow guest uploads",
-			})
-		}
-	}
-
-	// Upload photo
-	photo, err := h.photoController.UploadPhoto(uint(eventID), userID, file)
-	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"success": false,
-			"error":   err.Error(),
-		})
-	}
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Photo uploaded successfully",
-		"data":    photo,
-	})
 }
 
 func (h *PhotoHandler) GetEventPhotos(c *fiber.Ctx) error {
 	eventID, err := strconv.ParseUint(c.Params("eventId"), 10, 32)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"error":   "Invalid event ID",
-		})
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid event ID"))
 	}
 
-	// User ID'yi JWT'den al ve nil kontrolü yap
-	userIDInterface := c.Locals("user_id")
-	if userIDInterface == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{
-			"success": false,
-			"error":   "Unauthorized",
-		})
-	}
+	userID := c.Locals("userID").(uint)
 
-	userID, ok := userIDInterface.(uint)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"success": false,
-			"error":   "Invalid user ID format",
-		})
-	}
-
-	photos, err := h.photoController.GetEventPhotos(uint(eventID), userID)
+	photos, err := h.photoService.GetEventPhotos(uint(eventID), userID)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"success": false,
-			"error":   err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse(err.Error()))
+	}
+
+	var responses []models.PhotoResponse
+	for _, photo := range photos {
+		responses = append(responses, models.PhotoResponse{
+			ID:           photo.ID,
+			EventID:      photo.EventID,
+			UserID:       photo.UserID,
+			FileName:     photo.FileName,
+			FileSize:     photo.FileSize,
+			MimeType:     photo.MimeType,
+			PublicURL:    photo.PublicURL,
+			ThumbnailURL: h.photoService.ImgStorage.GetThumbnailURL(photo.ImageID),
+			MediumURL:    h.photoService.ImgStorage.GetMediumURL(photo.ImageID),
+			LargeURL:     h.photoService.ImgStorage.GetLargeURL(photo.ImageID),
+			IsGuest:      photo.IsGuest,
+			CreatedAt:    photo.CreatedAt,
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Photos retrieved successfully",
-		"data":    photos,
-	})
+	return c.JSON(models.SuccessResponse(responses, "Photos retrieved successfully"))
 }
 
-// DeletePhotoRequest struct'ı ekleyelim
-type DeletePhotoRequest struct {
-	PhotoID uint `json:"photo_id"`
+func (h *PhotoHandler) UploadPhoto(c *fiber.Ctx) error {
+	eventID, err := strconv.ParseUint(c.Params("eventId"), 10, 32)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid event ID"))
+	}
+
+	userID := c.Locals("userID").(uint)
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("No file uploaded"))
+	}
+
+	response, err := h.photoService.UploadPhoto(uint(eventID), userID, file)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse(err.Error()))
+	}
+
+	return c.JSON(models.SuccessResponse(response, "Photo uploaded successfully"))
 }
 
 func (h *PhotoHandler) DeletePhoto(c *fiber.Ctx) error {
-	// Get photo_id from URL parameter
-	photoIDStr := c.Params("id")
-	photoID, err := strconv.ParseUint(photoIDStr, 10, 32)
+	photoID, err := strconv.ParseUint(c.Params("id"), 10, 32)
 	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"error":   "Invalid photo ID",
-		})
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid photo ID"))
 	}
 
-	userIDInterface := c.Locals("user_id")
-	if userIDInterface == nil {
-		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse("Unauthorized"))
+	userID := c.Locals("userID").(uint)
+
+	if err := h.photoService.DeletePhoto(uint(photoID), userID); err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse(err.Error()))
 	}
 
-	userID, ok := userIDInterface.(uint)
-	if !ok {
-		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("Invalid user ID format"))
-	}
-
-	// Delete photo
-	if err := h.photoController.DeletePhoto(uint(photoID), userID); err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"success": false,
-			"error":   err.Error(),
-		})
-	}
-
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Photo deleted successfully",
-	})
+	return c.JSON(models.SuccessResponse(nil, "Photo deleted successfully"))
 }
 
 func (h *PhotoHandler) GetPublicEventPhotos(c *fiber.Ctx) error {
-	// Get event URL from params
 	eventURL := c.Params("url")
-	if eventURL == "" {
-		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{
-			"success": false,
-			"error":   "Event URL is required",
-		})
-	}
 
-	// Get photos
-	photos, err := h.photoController.GetPublicEventPhotos(eventURL)
+	photos, err := h.photoService.GetPublicEventPhotos(eventURL)
 	if err != nil {
-		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
-			"success": false,
-			"error":   err.Error(),
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse(err.Error()))
+	}
+
+	var responses []models.PhotoResponse
+	for _, photo := range photos {
+		responses = append(responses, models.PhotoResponse{
+			ID:           photo.ID,
+			EventID:      photo.EventID,
+			UserID:       photo.UserID,
+			FileName:     photo.FileName,
+			FileSize:     photo.FileSize,
+			MimeType:     photo.MimeType,
+			PublicURL:    photo.PublicURL,
+			ThumbnailURL: h.photoService.ImgStorage.GetThumbnailURL(photo.ImageID),
+			MediumURL:    h.photoService.ImgStorage.GetMediumURL(photo.ImageID),
+			LargeURL:     h.photoService.ImgStorage.GetLargeURL(photo.ImageID),
+			IsGuest:      photo.IsGuest,
+			CreatedAt:    photo.CreatedAt,
 		})
 	}
 
-	return c.JSON(fiber.Map{
-		"success": true,
-		"message": "Photos retrieved successfully",
-		"data":    photos,
-	})
+	return c.JSON(models.SuccessResponse(responses, "Photos retrieved successfully"))
 }

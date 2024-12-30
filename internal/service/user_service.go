@@ -122,3 +122,38 @@ func (s *UserService) UpdateProfile(userID uint, req models.UpdateProfileRequest
 
 	return user, nil
 }
+
+func (s *UserService) Register(req models.RegisterRequest) (*models.User, error) {
+	// Email kontrolü
+	exists, err := s.userRepo.EmailExists(req.Email)
+	if err != nil {
+		return nil, err
+	}
+	if exists {
+		return nil, errors.New("email already exists")
+	}
+
+	// Şifreyi hashle
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		return nil, err
+	}
+
+	// Yeni kullanıcı oluştur
+	user := &models.User{
+		FullName:   req.FullName,
+		Email:      req.Email,
+		Password:   string(hashedPassword),
+		EventLimit: 1,  // Default 1 event
+		PhotoLimit: 20, // Default 20 photos
+		CreatedAt:  time.Now(),
+		UpdatedAt:  time.Now(),
+	}
+
+	// Kullanıcıyı kaydet
+	if err := s.userRepo.Create(user); err != nil {
+		return nil, err
+	}
+
+	return user, nil
+}

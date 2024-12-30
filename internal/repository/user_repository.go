@@ -1,6 +1,9 @@
 package repository
 
 import (
+	"errors"
+	"fmt"
+
 	"github.com/sefazor/ourphotos-backend/internal/models"
 	"gorm.io/gorm"
 )
@@ -33,7 +36,26 @@ func (r *UserRepository) EmailExists(email string) (bool, error) {
 }
 
 func (r *UserRepository) UpdatePassword(userID uint, hashedPassword string) error {
-	return r.db.Model(&models.User{}).Where("id = ?", userID).Update("password", hashedPassword).Error
+	result := r.db.Model(&models.User{}).
+		Where("id = ?", userID).
+		Update("password", hashedPassword)
+
+	if result.Error != nil {
+		return result.Error
+	}
+
+	if result.RowsAffected == 0 {
+		return errors.New("no rows affected")
+	}
+
+	// Debug için ekliyoruz
+	var user models.User
+	if err := r.db.First(&user, userID).Error; err != nil {
+		return err
+	}
+	fmt.Printf("Password updated in DB. New hash: %s\n", user.Password)
+
+	return nil
 }
 
 func (r *UserRepository) GetByID(userID uint) (*models.User, error) {

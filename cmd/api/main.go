@@ -11,7 +11,7 @@ import (
 	"github.com/joho/godotenv"
 
 	"github.com/gofiber/fiber/v2/middleware/limiter"
-	"github.com/sefazor/ourphotos-backend/internal/controller"
+	"github.com/sefazor/ourphotos-backend/internal/config"
 	"github.com/sefazor/ourphotos-backend/internal/handler"
 	"github.com/sefazor/ourphotos-backend/internal/middleware"
 	"github.com/sefazor/ourphotos-backend/internal/models"
@@ -21,6 +21,7 @@ import (
 	"github.com/sefazor/ourphotos-backend/pkg/email"
 	"github.com/sefazor/ourphotos-backend/pkg/payment"
 	"github.com/sefazor/ourphotos-backend/pkg/storage"
+	"github.com/sefazor/ourphotos-backend/pkg/utils"
 )
 
 func main() {
@@ -29,6 +30,9 @@ func main() {
 		log.Fatal("Error loading .env file")
 	}
 
+	// Config'i yükle
+	cfg := config.LoadConfig()
+
 	// Initialize database
 	db := database.NewDatabase()
 
@@ -36,8 +40,9 @@ func main() {
 	if err := db.AutoMigrate(
 		&models.User{},
 		&models.Event{},
-		&models.CreditPackage{},      // Yeni
-		&models.UserCreditPurchase{}, // Yeni
+		&models.Photos{},
+		&models.CreditPackage{},
+		&models.UserCreditPurchase{},
 	); err != nil {
 		log.Fatal("Failed to migrate database:", err)
 	}
@@ -50,46 +55,49 @@ func main() {
 	purchaseRepo := repository.NewUserCreditPurchaseRepository(db)
 
 	// Storage services
-	cloudflareR2, err := storage.NewCloudflareStorage()
+	r2Storage, err := storage.NewCloudflareStorage(cfg)
 	if err != nil {
-		log.Fatal("Failed to initialize Cloudflare R2:", err)
+		log.Fatal("Failed to initialize R2 storage:", err)
 	}
-	cloudflareImages := storage.NewCloudflareImages()
+	imgStorage := storage.NewCloudflareImages(cfg.CloudflareImages.AccountID, cfg.CloudflareImages.Token)
+
+	// Email service
+	emailService := email.NewEmailService()
 
 	// Services
-	emailService := email.NewEmailService()
 	authService := service.NewAuthService(userRepo, emailService)
 	userService := service.NewUserService(userRepo, emailService)
-	eventService := service.NewEventService(eventRepo, userRepo)
-	photoService := service.NewPhotoService(photoRepo, eventRepo, cloudflareR2, cloudflareImages)
+	photoService := service.NewPhotoService(
+		photoRepo,
+		eventRepo,
+		r2Storage,
+		imgStorage,
+		userRepo,
+	)
+	eventService := service.NewEventService(eventRepo, userRepo, photoService)
 
 	// Stripe service
 	stripeService := payment.NewStripeService(os.Getenv("STRIPE_SECRET_KEY"))
 
 	// Payment service
-	paymentService := service.NewPaymentService(stripeService, userRepo, packageRepo, purchaseRepo)
+	paymentService := service.NewPaymentService(
+		stripeService,
+		userRepo,
+		packageRepo,
+		purchaseRepo,
+	)
 
-	// Payment controller
-	paymentController := controller.NewPaymentController(paymentService)
-
-	// Payment handler
-	paymentHandler := handler.NewPaymentHandler(paymentController)
-
-	// Controllers
-	authController := controller.NewAuthController(authService)
-	userController := controller.NewUserController(userService)
-	eventController := controller.NewEventController(eventService)
-	photoController := controller.NewPhotoController(photoService)
+	// Validator'ı önce tanımla
+	validator := utils.NewValidator()
 
 	// Handlers
-	authHandler := handler.NewAuthHandler(authController)
-	userHandler := handler.NewUserHandler(userController)
-	eventHandler := handler.NewEventHandler(eventController, userController)
-	photoHandler := handler.NewPhotoHandler(
-		photoController,
-		userController,
-		eventController,
-	)
+	authHandler := handler.NewAuthHandler(authService)
+	eventHandler := handler.NewEventHandler(eventService, userService, validator)
+	userHandler := handler.NewUserHandler(userService)
+	photoHandler := handler.NewPhotoHandler(photoService)
+	paymentHandler := handler.NewPaymentHandler(paymentService)
+	packageService := service.NewPackageService(packageRepo)
+	creditPackageHandler := handler.NewCreditPackageHandler(packageService)
 
 	// Router
 	app := fiber.New()
@@ -117,8 +125,11 @@ func main() {
 
 	// Public event routes
 	api.Get("/events/:url", eventHandler.GetEventByURL)
-	api.Post("/events/:id/check-password", eventHandler.CheckEventPassword)
+	api.Post("/events/url/:url/check-password", eventHandler.CheckEventPassword)
 	api.Get("/gallery/:url", photoHandler.GetPublicEventPhotos)
+	api.Post("/events/:eventId/photos", eventHandler.UploadEventPhotos)
+
+	// Public photo routes (authentication middleware'den ÖNCE olmalı)
 	api.Post("/events/photos", photoHandler.UploadPhoto)
 
 	// Stripe webhook (public)
@@ -142,6 +153,7 @@ func main() {
 		events.Get("/:id", eventHandler.GetEvent)
 		events.Put("/:id", eventHandler.UpdateEvent)
 		events.Delete("/:id", eventHandler.DeleteEvent)
+		events.Post("/:eventId/photos", eventHandler.UploadEventPhotos)
 
 		// Photo routes
 		photos := api.Group("/photos")
@@ -152,6 +164,11 @@ func main() {
 		payments := api.Group("/payments")
 		payments.Get("/history", paymentHandler.GetPurchaseHistory)
 		payments.Post("/checkout/:packageId", paymentHandler.CreateCheckoutSession)
+
+		// Credit package routes
+		packages := api.Group("/packages")
+		packages.Get("/", creditPackageHandler.GetAllPackages)
+		packages.Get("/:id", creditPackageHandler.GetPackageByID)
 	}
 
 	// Start server

@@ -6,17 +6,15 @@ import (
 
 type Photos struct {
 	ID         uint      `json:"id" gorm:"primaryKey"`
-	EventID    uint      `json:"event_id" gorm:"not null"`
+	EventID    uint      `json:"event_id"`
 	UserID     uint      `json:"user_id"`
-	FileName   string    `json:"file_name" gorm:"not null"`
-	FileSize   int64     `json:"file_size" gorm:"not null"`
-	MimeType   string    `json:"mime_type" gorm:"not null"`
-	Path       string    `json:"path" gorm:"not null"`
-	ImageID    string    `json:"image_id" gorm:"not null"`
-	Variants   []string  `json:"variants" gorm:"type:json;serializer:json"`
-	R2Key      string    `json:"r2_key" gorm:"not null"`
-	IsGuest    bool      `json:"is_guest" gorm:"default:false"`
-	IsUploaded bool      `json:"is_uploaded" gorm:"default:false"`
+	FileName   string    `json:"file_name"`
+	FileSize   int64     `json:"file_size"`
+	MimeType   string    `json:"mime_type"`
+	R2Key      string    `json:"r2_key"`
+	ImageID    string    `json:"image_id"`
+	PublicURL  string    `json:"public_url"`
+	IsGuest    bool      `json:"is_guest"`
 	UploadedAt time.Time `json:"uploaded_at"`
 	CreatedAt  time.Time `json:"created_at"`
 	UpdatedAt  time.Time `json:"updated_at"`
@@ -28,13 +26,16 @@ type CreatePhotoRequest struct {
 }
 
 type PhotoResponse struct {
-	ID        uint      `json:"id"`
-	EventID   uint      `json:"event_id"`
-	UserID    uint      `json:"user_id,omitempty"`
-	FileName  string    `json:"file_name"`
-	FileSize  int64     `json:"file_size"`
-	MimeType  string    `json:"mime_type"`
-	Path      string    `json:"path"`
-	IsGuest   bool      `json:"is_guest"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           uint      `json:"id"`
+	EventID      uint      `json:"event_id"`
+	UserID       uint      `json:"user_id,omitempty"`
+	FileName     string    `json:"file_name"`
+	FileSize     int64     `json:"file_size"`
+	MimeType     string    `json:"mime_type"`
+	PublicURL    string    `json:"public_url"`
+	ThumbnailURL string    `json:"thumbnail_url"`
+	MediumURL    string    `json:"medium_url"`
+	LargeURL     string    `json:"large_url"`
+	IsGuest      bool      `json:"is_guest"`
+	CreatedAt    time.Time `json:"created_at"`
 }

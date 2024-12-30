@@ -2,17 +2,17 @@ package handler
 
 import (
 	"github.com/gofiber/fiber/v2"
-	"github.com/sefazor/ourphotos-backend/internal/controller"
 	"github.com/sefazor/ourphotos-backend/internal/models"
+	"github.com/sefazor/ourphotos-backend/internal/service"
 )
 
 type UserHandler struct {
-	userController *controller.UserController
+	userService *service.UserService
 }
 
-func NewUserHandler(userController *controller.UserController) *UserHandler {
+func NewUserHandler(userService *service.UserService) *UserHandler {
 	return &UserHandler{
-		userController: userController,
+		userService: userService,
 	}
 }
 
@@ -33,7 +33,7 @@ func (h *UserHandler) GetMyProfile(c *fiber.Ctx) error {
 		})
 	}
 
-	user, err := h.userController.GetUserByID(userID)
+	user, err := h.userService.GetUserByID(userID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -53,13 +53,17 @@ func (h *UserHandler) ChangePassword(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
 	}
 
-	userEmail := c.Locals("userEmail").(string)
-	user, err := h.userController.GetUserByEmail(userEmail)
+	userEmail, ok := c.Locals("userEmail").(string)
+	if !ok {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse("User email not found in context"))
+	}
+
+	user, err := h.userService.GetUserByEmail(userEmail)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("User not found"))
 	}
 
-	if err := h.userController.ChangePassword(user.ID, req); err != nil {
+	if err := h.userService.ChangePassword(user.ID, req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}
 
@@ -73,12 +77,12 @@ func (h *UserHandler) InitiateEmailChange(c *fiber.Ctx) error {
 	}
 
 	userEmail := c.Locals("userEmail").(string)
-	user, err := h.userController.GetUserByEmail(userEmail)
+	user, err := h.userService.GetUserByEmail(userEmail)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("User not found"))
 	}
 
-	if err := h.userController.InitiateEmailChange(user.ID, req); err != nil {
+	if err := h.userService.InitiateEmailChange(user.ID, req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}
 
@@ -91,7 +95,7 @@ func (h *UserHandler) CompleteEmailChange(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
 	}
 
-	if err := h.userController.CompleteEmailChange(req.Token); err != nil {
+	if err := h.userService.CompleteEmailChange(req.Token); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}
 
@@ -109,12 +113,12 @@ func (h *UserHandler) UpdateProfile(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse("Unauthorized"))
 	}
 
-	user, err := h.userController.GetUserByEmail(userEmail)
+	user, err := h.userService.GetUserByEmail(userEmail)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("User not found"))
 	}
 
-	updatedUser, err := h.userController.UpdateProfile(user.ID, req)
+	updatedUser, err := h.userService.UpdateProfile(user.ID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}

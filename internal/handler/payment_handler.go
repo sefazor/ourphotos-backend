@@ -6,17 +6,17 @@ import (
 	"strconv"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/sefazor/ourphotos-backend/internal/controller"
+	"github.com/sefazor/ourphotos-backend/internal/service"
 	"github.com/stripe/stripe-go/v74/webhook"
 )
 
 type PaymentHandler struct {
-	paymentController *controller.PaymentController
+	paymentService *service.PaymentService
 }
 
-func NewPaymentHandler(paymentController *controller.PaymentController) *PaymentHandler {
+func NewPaymentHandler(paymentService *service.PaymentService) *PaymentHandler {
 	return &PaymentHandler{
-		paymentController: paymentController,
+		paymentService: paymentService,
 	}
 }
 
@@ -46,7 +46,7 @@ func (h *PaymentHandler) CreateCheckoutSession(c *fiber.Ctx) error {
 		})
 	}
 
-	session, err := h.paymentController.CreateCheckoutSession(userID, uint(packageID))
+	session, err := h.paymentService.CreateCheckoutSession(userID, uint(packageID))
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -83,7 +83,7 @@ func (h *PaymentHandler) HandleStripeWebhook(c *fiber.Ctx) error {
 		})
 	}
 
-	if err := h.paymentController.HandleStripeWebhook(&event); err != nil {
+	if err := h.paymentService.HandleStripeWebhook(&event); err != nil {
 		fmt.Printf("Controller Error: %v\n", err)
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -95,7 +95,7 @@ func (h *PaymentHandler) HandleStripeWebhook(c *fiber.Ctx) error {
 }
 
 func (h *PaymentHandler) GetCreditPackages(c *fiber.Ctx) error {
-	packages, err := h.paymentController.GetCreditPackages()
+	packages, err := h.paymentService.GetCreditPackages()
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,
@@ -128,7 +128,7 @@ func (h *PaymentHandler) GetPurchaseHistory(c *fiber.Ctx) error {
 		})
 	}
 
-	purchases, err := h.paymentController.GetUserPurchaseHistory(userID)
+	purchases, err := h.paymentService.GetUserPurchaseHistory(userID)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{
 			"success": false,

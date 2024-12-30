@@ -26,3 +26,15 @@ func (r *CreditPackageRepository) GetAll() ([]models.CreditPackage, error) {
 	err := r.db.Where("is_active = ?", true).Find(&packages).Error
 	return packages, err
 }
+
+func (r *CreditPackageRepository) Create(pkg *models.CreditPackage) error {
+	return r.db.Create(pkg).Error
+}
+
+func (r *CreditPackageRepository) Update(pkg *models.CreditPackage) error {
+	return r.db.Save(pkg).Error
+}
+
+func (r *CreditPackageRepository) Delete(id uint) error {
+	return r.db.Delete(&models.CreditPackage{}, id).Error
+}

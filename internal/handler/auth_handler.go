@@ -1,18 +1,20 @@
 package handler
 
 import (
+	"fmt"
+
 	"github.com/gofiber/fiber/v2"
-	"github.com/sefazor/ourphotos-backend/internal/controller"
 	"github.com/sefazor/ourphotos-backend/internal/models"
+	"github.com/sefazor/ourphotos-backend/internal/service"
 )
 
 type AuthHandler struct {
-	authController *controller.AuthController
+	authService *service.AuthService
 }
 
-func NewAuthHandler(authController *controller.AuthController) *AuthHandler {
+func NewAuthHandler(authService *service.AuthService) *AuthHandler {
 	return &AuthHandler{
-		authController: authController,
+		authService: authService,
 	}
 }
 
@@ -22,7 +24,7 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
 	}
 
-	user, err := h.authController.Register(req)
+	user, err := h.authService.Register(req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}
@@ -36,7 +38,7 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
 	}
 
-	token, err := h.authController.Login(req)
+	token, err := h.authService.Login(req)
 	if err != nil {
 		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse(err.Error()))
 	}
@@ -52,7 +54,7 @@ func (h *AuthHandler) ForgotPassword(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
 	}
 
-	if err := h.authController.ForgotPassword(req.Email); err != nil {
+	if err := h.authService.ForgotPassword(req.Email); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}
 
@@ -62,10 +64,22 @@ func (h *AuthHandler) ForgotPassword(c *fiber.Ctx) error {
 func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	var req models.ResetPasswordRequest
 	if err := c.BodyParser(&req); err != nil {
+		fmt.Printf("Body parse error: %v\n", err)
+		fmt.Printf("Raw body: %s\n", string(c.Body()))
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
 	}
 
-	if err := h.authController.ResetPassword(req.Token, req.NewPassword); err != nil {
+	// Validation
+	if req.Token == "" || req.NewPassword == "" {
+		fmt.Printf("Invalid request: Token=%v, NewPassword=%v\n", req.Token != "", req.NewPassword != "")
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Token and new password are required"))
+	}
+
+	fmt.Printf("Reset Password Request:\n")
+	fmt.Printf("Token length: %d\n", len(req.Token))
+	fmt.Printf("New Password length: %d\n", len(req.NewPassword))
+
+	if err := h.authService.ResetPassword(req.Token, req.NewPassword); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}
 

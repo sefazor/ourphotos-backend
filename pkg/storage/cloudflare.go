@@ -1,17 +1,15 @@
 package storage
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"io"
-	"mime/multipart"
-	"os"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	internalConfig "github.com/sefazor/ourphotos-backend/internal/config"
 )
 
 type CloudflareStorage struct {
@@ -21,56 +19,43 @@ type CloudflareStorage struct {
 	publicURL string
 }
 
-func NewCloudflareStorage() (*CloudflareStorage, error) {
-	accountID := os.Getenv("R2_ACCOUNT_ID")
-	accessKeyID := os.Getenv("R2_ACCESS_KEY_ID")
-	secretAccessKey := os.Getenv("R2_SECRET_ACCESS_KEY")
-	bucket := os.Getenv("R2_BUCKET")
-	publicURL := os.Getenv("R2_PUBLIC_URL")
-
-	if accountID == "" || accessKeyID == "" || secretAccessKey == "" || bucket == "" || publicURL == "" {
-		return nil, fmt.Errorf("missing required CloudFlare R2 configuration")
-	}
-
+func NewCloudflareStorage(cfg *internalConfig.Config) (*CloudflareStorage, error) {
 	r2Resolver := aws.EndpointResolverWithOptionsFunc(func(service, region string, options ...interface{}) (aws.Endpoint, error) {
 		return aws.Endpoint{
-			URL: fmt.Sprintf("https://%s.r2.cloudflarestorage.com", accountID),
+			URL: fmt.Sprintf("https://%s.r2.cloudflarestorage.com", cfg.R2.AccountID),
 		}, nil
 	})
 
-	cfg, err := config.LoadDefaultConfig(context.TODO(),
+	awsCfg, err := config.LoadDefaultConfig(context.TODO(),
 		config.WithEndpointResolverWithOptions(r2Resolver),
-		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(accessKeyID, secretAccessKey, "")),
+		config.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+			cfg.R2.AccessKeyID,
+			cfg.R2.SecretAccessKey,
+			"",
+		)),
 		config.WithRegion("auto"),
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to load AWS config: %v", err)
+		return nil, fmt.Errorf("failed to load AWS config: %w", err)
 	}
 
-	client := s3.NewFromConfig(cfg)
-
 	return &CloudflareStorage{
-		client:    client,
-		bucket:    bucket,
-		accountID: accountID,
-		publicURL: publicURL,
+		client:    s3.NewFromConfig(awsCfg),
+		bucket:    cfg.R2.Bucket,
+		accountID: cfg.R2.AccountID,
+		publicURL: cfg.R2.PublicURL,
 	}, nil
 }
 
 // Upload dosyayı R2'ye yükler
-func (s *CloudflareStorage) Upload(key string, src multipart.File) error {
-	data, err := io.ReadAll(src)
-	if err != nil {
-		return fmt.Errorf("failed to read file: %v", err)
-	}
-
+func (s *CloudflareStorage) Upload(key string, src io.Reader) error {
 	input := &s3.PutObjectInput{
 		Bucket: aws.String(s.bucket),
 		Key:    aws.String(key),
-		Body:   bytes.NewReader(data),
+		Body:   src,
 	}
 
-	_, err = s.client.PutObject(context.TODO(), input)
+	_, err := s.client.PutObject(context.TODO(), input)
 	if err != nil {
 		return fmt.Errorf("failed to upload to R2: %v", err)
 	}
