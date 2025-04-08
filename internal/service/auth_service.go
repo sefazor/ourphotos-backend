@@ -14,6 +14,14 @@ import (
 	jwtPkg "github.com/sefazor/ourphotos-backend/pkg/jwt"
 )
 
+const (
+	// Token süreleri
+	TokenExpiryLogin       = 7 * 24 * time.Hour // 7 gün
+	TokenExpiryReset       = 15 * time.Minute   // 15 dakika
+	TokenExpiryEmailChange = 15 * time.Minute   // 15 dakika
+	TokenExpiryEmailVerify = 24 * time.Hour     // 24 saat
+)
+
 type AuthService struct {
 	userRepo     *repository.UserRepository
 	emailService *email.EmailService
@@ -48,14 +56,26 @@ func (s *AuthService) Register(req models.RegisterRequest) (*models.AuthResponse
 
 	// Kullanıcıyı oluştur
 	user := &models.User{
-		FullName: req.FullName,
-		Email:    req.Email,
-		Password: string(hashedPassword),
+		FullName:   req.FullName,
+		Email:      req.Email,
+		Password:   string(hashedPassword),
+		EventLimit: 1,     // Default 1 event
+		PhotoLimit: 20,    // Default 20 photos
+		IsVerified: false, // Doğrulama gerekli
 	}
 
 	if err := s.userRepo.Create(user); err != nil {
 		return nil, err
 	}
+
+	// Email doğrulama tokeni oluştur
+	verificationToken, err := s.generateVerificationToken(user.Email)
+	if err != nil {
+		return nil, err
+	}
+
+	// Doğrulama emaili gönder
+	go s.emailService.SendVerificationEmail(user.Email, user.FullName, verificationToken)
 
 	// JWT token oluştur
 	token, err := jwtPkg.GenerateToken(user.Email, user.ID)
@@ -100,6 +120,74 @@ func (s *AuthService) Login(req models.LoginRequest) (*models.AuthResponse, erro
 	}, nil
 }
 
+func (s *AuthService) VerifyEmail(token string) error {
+	// Token doğrula
+	claims, err := jwtPkg.ValidateToken(token)
+	if err != nil {
+		return errors.New("invalid or expired token")
+	}
+
+	email, ok := claims["email"].(string)
+	if !ok {
+		return errors.New("invalid token claims")
+	}
+
+	// Kullanıcıyı bul
+	user, err := s.userRepo.GetByEmail(email)
+	if err != nil {
+		return errors.New("user not found")
+	}
+
+	// Kullanıcı zaten doğrulanmış mı?
+	if user.IsVerified {
+		return errors.New("email already verified")
+	}
+
+	// Kullanıcıyı doğrulanmış olarak işaretle
+	user.IsVerified = true
+	if err := s.userRepo.Update(user); err != nil {
+		return errors.New("failed to verify email")
+	}
+
+	return nil
+}
+
+func (s *AuthService) ResendVerificationEmail(email string) error {
+	// Kullanıcıyı bul
+	user, err := s.userRepo.GetByEmail(email)
+	if err != nil {
+		return errors.New("user not found")
+	}
+
+	// Kullanıcı zaten doğrulanmış mı?
+	if user.IsVerified {
+		return errors.New("email already verified")
+	}
+
+	// Yeni doğrulama tokeni oluştur
+	verificationToken, err := s.generateVerificationToken(email)
+	if err != nil {
+		return err
+	}
+
+	// Doğrulama emaili gönder
+	return s.emailService.SendVerificationEmail(user.Email, user.FullName, verificationToken)
+}
+
+func (s *AuthService) generateVerificationToken(email string) (string, error) {
+	// Email doğrulama tokeni oluştur
+	claims := jwt.MapClaims{
+		"email": email,
+		"exp":   time.Now().Add(TokenExpiryEmailVerify).Unix(),
+		"iat":   time.Now().Unix(),
+		"iss":   s.jwtIssuer,
+		"type":  "email_verification",
+	}
+
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+	return token.SignedString(s.jwtSecret)
+}
+
 func (s *AuthService) ForgotPassword(email string) error {
 	user, err := s.userRepo.GetByEmail(email)
 	if err != nil {
@@ -109,7 +197,7 @@ func (s *AuthService) ForgotPassword(email string) error {
 	// Reset token oluştur
 	claims := jwt.MapClaims{
 		"sub": user.Email,
-		"exp": time.Now().Add(15 * time.Minute).Unix(),
+		"exp": time.Now().Add(TokenExpiryReset).Unix(),
 		"iat": time.Now().Unix(),
 		"iss": s.jwtIssuer,
 	}
@@ -125,27 +213,11 @@ func (s *AuthService) ForgotPassword(email string) error {
 	return s.emailService.SendPasswordResetEmail(user.Email, resetToken)
 }
 
-func (s *AuthService) generateToken(user *models.User) (string, error) {
-	// Token süresi: 7 gün
-	expirationTime := time.Now().Add(7 * 24 * time.Hour)
-
-	claims := jwt.MapClaims{
-		"user_id": user.ID,
-		"email":   user.Email,
-		"exp":     expirationTime.Unix(),
-		"iat":     time.Now().Unix(),
-	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	return token.SignedString(s.jwtSecret)
-}
-
 // Reset token ile şifre değiştirme
 func (s *AuthService) ResetPassword(token string, newPassword string) error {
 	claims, err := jwtPkg.ValidateToken(token)
 	if err != nil {
-		return fmt.Errorf("token validation failed: %v", err)
+		return errors.New("invalid or expired token")
 	}
 
 	email, ok := claims["sub"].(string)
@@ -158,38 +230,16 @@ func (s *AuthService) ResetPassword(token string, newPassword string) error {
 		return err
 	}
 
-	fmt.Printf("\nReset Password Debug:\n")
-	fmt.Printf("User Email: %s\n", email)
-	fmt.Printf("New Password: %s\n", newPassword)
-
 	// Yeni şifreyi hashle
 	hashedPassword, err := bcrypt.HashPassword(newPassword)
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Generated Hash: %s\n", hashedPassword)
-
-	// Debug için
-	bcrypt.DebugHashAndCompare(newPassword)
 
 	// Şifreyi güncelle
 	if err := s.userRepo.UpdatePassword(user.ID, hashedPassword); err != nil {
 		return err
 	}
 
-	// Doğrulama
-	updatedUser, err := s.userRepo.GetByEmail(email)
-	if err != nil {
-		return err
-	}
-	fmt.Printf("Stored Hash: %s\n", updatedUser.Password)
-
-	// Test et - ComparePassword kullanıyoruz
-	if err := bcrypt.ComparePassword(updatedUser.Password, newPassword); err != nil {
-		fmt.Printf("Verification Error: %v\n", err)
-		return fmt.Errorf("password verification failed: %v", err)
-	}
-
-	fmt.Printf("Password reset successful!\n")
 	return nil
 }

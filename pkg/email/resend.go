@@ -136,6 +136,41 @@ func (s *EmailService) SendEmailChangeVerification(email, token string) error {
 	return err
 }
 
+func (s *EmailService) SendVerificationEmail(email, fullName, token string) error {
+	s.logger.Printf("Sending verification email to: %s", email)
+
+	verificationLink := os.Getenv("FRONTEND_URL") + "/verify-email?token=" + token
+
+	templateData := map[string]interface{}{
+		"FullName":         fullName,
+		"VerificationLink": verificationLink,
+		"Email":            email,
+		"Year":             time.Now().Year(),
+	}
+
+	html, err := s.parseTemplate("verify-email.html", templateData)
+	if err != nil {
+		s.logger.Printf("Error parsing verification template for %s: %v", email, err)
+		return err
+	}
+
+	params := &resend.SendEmailRequest{
+		From:    s.fromName + " <" + s.from + ">",
+		To:      []string{email},
+		Subject: "Verify Your Email - OurPhotos",
+		Html:    html,
+	}
+
+	resp, err := s.client.Emails.Send(params)
+	if err != nil {
+		s.logger.Printf("Failed to send verification email to %s: %v", email, err)
+		return err
+	}
+
+	s.logger.Printf("Successfully sent verification email to %s (ID: %s)", email, resp.Id)
+	return nil
+}
+
 func (s *EmailService) parseTemplate(templateName string, data interface{}) (string, error) {
 	templatePath := filepath.Join(s.templatesDir, templateName)
 

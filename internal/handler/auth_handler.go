@@ -1,8 +1,6 @@
 package handler
 
 import (
-	"fmt"
-
 	"github.com/gofiber/fiber/v2"
 	"github.com/sefazor/ourphotos-backend/internal/models"
 	"github.com/sefazor/ourphotos-backend/internal/service"
@@ -64,24 +62,51 @@ func (h *AuthHandler) ForgotPassword(c *fiber.Ctx) error {
 func (h *AuthHandler) ResetPassword(c *fiber.Ctx) error {
 	var req models.ResetPasswordRequest
 	if err := c.BodyParser(&req); err != nil {
-		fmt.Printf("Body parse error: %v\n", err)
-		fmt.Printf("Raw body: %s\n", string(c.Body()))
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
 	}
 
 	// Validation
 	if req.Token == "" || req.NewPassword == "" {
-		fmt.Printf("Invalid request: Token=%v, NewPassword=%v\n", req.Token != "", req.NewPassword != "")
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Token and new password are required"))
 	}
-
-	fmt.Printf("Reset Password Request:\n")
-	fmt.Printf("Token length: %d\n", len(req.Token))
-	fmt.Printf("New Password length: %d\n", len(req.NewPassword))
 
 	if err := h.authService.ResetPassword(req.Token, req.NewPassword); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}
 
 	return c.JSON(models.SuccessResponse(nil, "Password reset successful"))
+}
+
+func (h *AuthHandler) VerifyEmail(c *fiber.Ctx) error {
+	var req models.VerifyEmailRequest
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
+	}
+
+	if req.Token == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Token is required"))
+	}
+
+	if err := h.authService.VerifyEmail(req.Token); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
+	}
+
+	return c.JSON(models.SuccessResponse(nil, "Email verified successfully"))
+}
+
+func (h *AuthHandler) ResendVerificationEmail(c *fiber.Ctx) error {
+	var req models.ForgotPasswordRequest // Aynı modeli kullanabiliriz, sadece email gerekli
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
+	}
+
+	if req.Email == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Email is required"))
+	}
+
+	if err := h.authService.ResendVerificationEmail(req.Email); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
+	}
+
+	return c.JSON(models.SuccessResponse(nil, "Verification email sent"))
 }

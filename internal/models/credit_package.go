@@ -2,6 +2,15 @@ package models
 
 import "time"
 
+// Satın alma durumları
+const (
+	PurchaseStatusPending   = "pending"
+	PurchaseStatusCompleted = "completed"
+	PurchaseStatusFailed    = "failed"
+	PurchaseStatusRefunded  = "refunded"
+	PurchaseStatusCancelled = "cancelled"
+)
+
 type CreditPackage struct {
 	ID          uint      `json:"id" gorm:"primaryKey"`
 	Name        string    `json:"name" gorm:"not null"`

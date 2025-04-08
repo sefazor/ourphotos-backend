@@ -9,8 +9,8 @@ import (
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/sefazor/ourphotos-backend/internal/models"
 	"github.com/sefazor/ourphotos-backend/internal/repository"
+	"github.com/sefazor/ourphotos-backend/pkg/bcrypt"
 	"github.com/sefazor/ourphotos-backend/pkg/email"
-	"golang.org/x/crypto/bcrypt"
 )
 
 type UserService struct {
@@ -39,17 +39,16 @@ func (s *UserService) ChangePassword(userID uint, req models.ChangePasswordReque
 		return err
 	}
 
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.CurrentPassword)); err != nil {
+	if err := bcrypt.ComparePassword(user.Password, req.CurrentPassword); err != nil {
 		return errors.New("current password is incorrect")
 	}
 
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.NewPassword), bcrypt.DefaultCost)
+	hashedPassword, err := bcrypt.HashPassword(req.NewPassword)
 	if err != nil {
 		return err
 	}
 
-	user.Password = string(hashedPassword)
-	return s.userRepo.Update(user)
+	return s.userRepo.UpdatePassword(user.ID, hashedPassword)
 }
 
 func (s *UserService) InitiateEmailChange(userID uint, req models.ChangeEmailRequest) error {
@@ -60,7 +59,7 @@ func (s *UserService) InitiateEmailChange(userID uint, req models.ChangeEmailReq
 	}
 
 	// Şifreyi doğrula
-	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(req.Password)); err != nil {
+	if err := bcrypt.ComparePassword(user.Password, req.Password); err != nil {
 		return errors.New("invalid password")
 	}
 
@@ -77,7 +76,7 @@ func (s *UserService) InitiateEmailChange(userID uint, req models.ChangeEmailReq
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
 		"user_id":   userID,
 		"new_email": req.NewEmail,
-		"exp":       time.Now().Add(15 * time.Minute).Unix(),
+		"exp":       time.Now().Add(TokenExpiryEmailChange).Unix(),
 	})
 
 	tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
@@ -117,41 +116,6 @@ func (s *UserService) UpdateProfile(userID uint, req models.UpdateProfileRequest
 	user.FullName = req.FullName
 
 	if err := s.userRepo.Update(user); err != nil {
-		return nil, err
-	}
-
-	return user, nil
-}
-
-func (s *UserService) Register(req models.RegisterRequest) (*models.User, error) {
-	// Email kontrolü
-	exists, err := s.userRepo.EmailExists(req.Email)
-	if err != nil {
-		return nil, err
-	}
-	if exists {
-		return nil, errors.New("email already exists")
-	}
-
-	// Şifreyi hashle
-	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, err
-	}
-
-	// Yeni kullanıcı oluştur
-	user := &models.User{
-		FullName:   req.FullName,
-		Email:      req.Email,
-		Password:   string(hashedPassword),
-		EventLimit: 1,  // Default 1 event
-		PhotoLimit: 20, // Default 20 photos
-		CreatedAt:  time.Now(),
-		UpdatedAt:  time.Now(),
-	}
-
-	// Kullanıcıyı kaydet
-	if err := s.userRepo.Create(user); err != nil {
 		return nil, err
 	}
 

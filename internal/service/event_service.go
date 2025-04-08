@@ -1,6 +1,7 @@
 package service
 
 import (
+	cryptorand "crypto/rand"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/sefazor/ourphotos-backend/internal/models"
 	"github.com/sefazor/ourphotos-backend/internal/repository"
+	"github.com/sefazor/ourphotos-backend/pkg/bcrypt"
+	"github.com/sefazor/ourphotos-backend/pkg/qrcode"
 )
 
 var r = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -17,28 +20,68 @@ type EventService struct {
 	eventRepo    *repository.EventRepository
 	userRepo     *repository.UserRepository
 	photoService *PhotoService
+	qrService    *qrcode.QRService
 }
 
 func NewEventService(
 	eventRepo *repository.EventRepository,
 	userRepo *repository.UserRepository,
 	photoService *PhotoService,
+	qrService *qrcode.QRService,
 ) *EventService {
 	return &EventService{
 		eventRepo:    eventRepo,
 		userRepo:     userRepo,
 		photoService: photoService,
+		qrService:    qrService,
 	}
 }
 
 func generateEventURL() string {
 	const charset = "abcdefghijklmnopqrstuvwxyz0123456789"
-	length := 6
-	b := make([]byte, length)
-	for i := range b {
-		b[i] = charset[r.Intn(len(charset))]
+	length := 8
+
+	// Rastgele bayt dizisi oluştur
+	randomBytes := make([]byte, length)
+	_, err := cryptorand.Read(randomBytes)
+	if err != nil {
+		// Hata durumunda fallback olarak eski yöntemi kullan
+		b := make([]byte, length)
+		for i := range b {
+			b[i] = charset[r.Intn(len(charset))]
+		}
+		return string(b)
 	}
-	return string(b)
+
+	// Baytları karakter setine dönüştür
+	result := make([]byte, length)
+	for i := 0; i < length; i++ {
+		// Rastgele baytları charset'in indekslerine dönüştür
+		result[i] = charset[randomBytes[i]%byte(len(charset))]
+	}
+
+	return string(result)
+}
+
+// Süreye göre son geçerlilik tarihini hesaplayan yardımcı fonksiyon
+func calculateExpiryDate(duration models.DurationType) time.Time {
+	now := time.Now()
+
+	switch duration {
+	case models.Duration7Days:
+		return now.AddDate(0, 0, 7)
+	case models.Duration14Days:
+		return now.AddDate(0, 0, 14)
+	case models.Duration21Days:
+		return now.AddDate(0, 0, 21)
+	case models.Duration30Days:
+		return now.AddDate(0, 0, 30)
+	case models.Duration3Months:
+		return now.AddDate(0, 3, 0)
+	default:
+		// Varsayılan olarak 7 gün
+		return now.AddDate(0, 0, 7)
+	}
 }
 
 func (s *EventService) CreateEvent(userID uint, req models.EventRequest) (*models.EventResponse, error) {
@@ -53,23 +96,6 @@ func (s *EventService) CreateEvent(userID uint, req models.EventRequest) (*model
 		return nil, errors.New("event limit exceeded")
 	}
 
-	// Kullanıcının tüm eventlerindeki photo_limit toplamını hesapla
-	totalAllocatedPhotos, err := s.eventRepo.GetTotalPhotoLimitsByUserID(userID)
-	if err != nil {
-		return nil, err
-	}
-
-	// Kalan limiti hesapla
-	remainingLimit := user.PhotoLimit - totalAllocatedPhotos
-
-	if req.PhotoLimit > remainingLimit {
-		return nil, fmt.Errorf(
-			"photo limit allocation exceeded. Available: %d, Requested: %d",
-			remainingLimit,
-			req.PhotoLimit,
-		)
-	}
-
 	// URL generate et
 	url := generateEventURL()
 
@@ -82,18 +108,31 @@ func (s *EventService) CreateEvent(userID uint, req models.EventRequest) (*model
 		url = generateEventURL()
 	}
 
+	// Şifre varsa hashle
+	var hashedPassword string
+	if req.HasPassword && req.Password != "" {
+		var err error
+		hashedPassword, err = bcrypt.HashPassword(req.Password)
+		if err != nil {
+			return nil, fmt.Errorf("failed to hash password: %w", err)
+		}
+	}
+
+	// Süreye göre son geçerlilik tarihini hesapla
+	expiresAt := calculateExpiryDate(req.Duration)
+
 	// Event modelini oluştur
 	event := &models.Event{
 		UserID:            userID,
 		Title:             req.Title,
 		Description:       req.Description,
+		Location:          req.Location,
 		URL:               url,
 		IsPublic:          req.IsPublic,
 		HasPassword:       req.HasPassword,
-		Password:          req.Password,
-		AllowGuestUploads: req.AllowGuestUpload,
-		PhotoLimit:        req.PhotoLimit,
-		ExpiresAt:         *req.ExpiresAt,
+		Password:          hashedPassword,
+		AllowGuestUploads: req.AllowGuestUploads,
+		ExpiresAt:         expiresAt,
 		CreatedAt:         time.Now(),
 		UpdatedAt:         time.Now(),
 	}
@@ -110,22 +149,26 @@ func (s *EventService) CreateEvent(userID uint, req models.EventRequest) (*model
 		return nil, err
 	}
 
+	// Kullanıcının kalan fotoğraf limitini hesapla
+	remainingPhotoLimit := user.PhotoLimit
+
 	// Response oluştur
 	response := &models.EventResponse{
 		ID:                      createdEvent.ID,
 		Title:                   createdEvent.Title,
 		Description:             createdEvent.Description,
+		Location:                createdEvent.Location,
 		URL:                     createdEvent.URL,
 		IsPublic:                createdEvent.IsPublic,
 		HasPassword:             createdEvent.HasPassword,
 		AllowGuestUploads:       createdEvent.AllowGuestUploads,
-		PhotoLimit:              createdEvent.PhotoLimit,
 		PhotoCount:              createdEvent.PhotoCount,
 		ExpiresAt:               createdEvent.ExpiresAt,
+		Duration:                string(req.Duration),
 		CreatedAt:               createdEvent.CreatedAt,
 		UpdatedAt:               createdEvent.UpdatedAt,
-		RemainingUserPhotoLimit: remainingLimit - req.PhotoLimit,
-		TotalAllocatedPhotos:    totalAllocatedPhotos + req.PhotoLimit,
+		RemainingUserPhotoLimit: remainingPhotoLimit,
+		TotalAllocatedPhotos:    0,
 	}
 
 	return response, nil
@@ -141,8 +184,8 @@ func (s *EventService) CheckEventPassword(eventURL string, password string) erro
 		return nil
 	}
 
-	// Production'da hash karşılaştırması yapılmalı
-	if event.Password != password {
+	// Hash karşılaştırması yap
+	if err := bcrypt.ComparePassword(event.Password, password); err != nil {
 		return errors.New("incorrect password")
 	}
 
@@ -164,12 +207,7 @@ func (s *EventService) GetUserEvents(userID uint) ([]models.EventResponse, error
 		return nil, err
 	}
 
-	totalAllocatedPhotos, err := s.eventRepo.GetTotalPhotoLimitsByUserID(userID)
-	if err != nil {
-		return nil, err
-	}
-
-	remainingLimit := user.PhotoLimit - totalAllocatedPhotos
+	remainingLimit := user.PhotoLimit
 
 	var response []models.EventResponse
 	for _, event := range events {
@@ -177,17 +215,17 @@ func (s *EventService) GetUserEvents(userID uint) ([]models.EventResponse, error
 			ID:                      event.ID,
 			Title:                   event.Title,
 			Description:             event.Description,
+			Location:                event.Location,
 			URL:                     event.URL,
 			IsPublic:                event.IsPublic,
 			HasPassword:             event.HasPassword,
 			AllowGuestUploads:       event.AllowGuestUploads,
-			PhotoLimit:              event.PhotoLimit,
 			PhotoCount:              event.PhotoCount,
 			ExpiresAt:               event.ExpiresAt,
 			CreatedAt:               event.CreatedAt,
 			UpdatedAt:               event.UpdatedAt,
 			RemainingUserPhotoLimit: remainingLimit,
-			TotalAllocatedPhotos:    totalAllocatedPhotos,
+			TotalAllocatedPhotos:    0,
 		})
 	}
 
@@ -217,8 +255,13 @@ func (s *EventService) UpdateEvent(eventID uint, userID uint, req models.UpdateE
 		event.Description = *req.Description
 		updated = true
 	}
-	if req.ExpiresAt != nil {
-		event.ExpiresAt = *req.ExpiresAt
+	if req.Location != nil {
+		event.Location = *req.Location
+		updated = true
+	}
+	if req.Duration != nil {
+		// Süreye göre yeni son geçerlilik tarihini hesapla
+		event.ExpiresAt = calculateExpiryDate(*req.Duration)
 		updated = true
 	}
 	if req.IsPublic != nil {
@@ -231,16 +274,17 @@ func (s *EventService) UpdateEvent(eventID uint, userID uint, req models.UpdateE
 		if !event.HasPassword {
 			event.Password = ""
 		} else if req.Password != nil && *req.Password != "" {
-			event.Password = *req.Password
+			// Şifreyi hashle
+			hashedPassword, err := bcrypt.HashPassword(*req.Password)
+			if err != nil {
+				return nil, fmt.Errorf("failed to hash password: %w", err)
+			}
+			event.Password = hashedPassword
 		}
 		updated = true
 	}
 	if req.AllowGuestUploads != nil {
 		event.AllowGuestUploads = *req.AllowGuestUploads
-		updated = true
-	}
-	if req.PhotoLimit != nil {
-		event.PhotoLimit = *req.PhotoLimit
 		updated = true
 	}
 
@@ -266,6 +310,32 @@ func (s *EventService) DeleteEvent(eventID uint, userID uint) error {
 	// Event sahibi kontrolü
 	if event.UserID != userID {
 		return errors.New("unauthorized")
+	}
+
+	// Önce etkinliğe ait fotoğrafları bul
+	photos, err := s.photoService.photoRepo.GetByEventID(eventID)
+	if err != nil {
+		return fmt.Errorf("failed to retrieve event photos: %w", err)
+	}
+
+	// Her bir fotoğrafı depolama servislerinden sil
+	for _, photo := range photos {
+		// R2'den sil
+		if err := s.photoService.r2Storage.Delete(photo.R2Key); err != nil {
+			// Hata loga kaydedilmeli ama işleme devam edilmeli
+			fmt.Printf("Error deleting photo %s from R2: %v\n", photo.R2Key, err)
+		}
+
+		// Cloudflare Images'dan sil
+		if err := s.photoService.ImgStorage.Delete(photo.ImageID); err != nil {
+			// Hata loga kaydedilmeli ama işleme devam edilmeli
+			fmt.Printf("Error deleting photo %s from Cloudflare Images: %v\n", photo.ImageID, err)
+		}
+	}
+
+	// Veritabanından tüm fotoğrafları sil
+	if err := s.photoService.photoRepo.DeleteByEventID(eventID); err != nil {
+		return fmt.Errorf("failed to delete event photos from database: %w", err)
 	}
 
 	// Event'i sil
@@ -306,4 +376,83 @@ func (s *EventService) UploadEventPhoto(eventID uint, userID uint, file *multipa
 	// Fotoğraf yükleme işlemi
 	// Bu kısmı PhotoService'e delege edebiliriz
 	return s.photoService.UploadPhoto(eventID, userID, file)
+}
+
+// Süresi dolmuş etkinlikleri temizleme metodu
+func (s *EventService) CleanupExpiredEvents() error {
+	// Şu anki tarihten önceki ExpiresAt değerine sahip eventleri bul
+	expiredEvents, err := s.eventRepo.FindExpiredEvents(time.Now())
+	if err != nil {
+		return fmt.Errorf("failed to find expired events: %w", err)
+	}
+
+	if len(expiredEvents) == 0 {
+		return nil // Silinecek etkinlik yok
+	}
+
+	fmt.Printf("Found %d expired events to clean up\n", len(expiredEvents))
+
+	// Her etkinlik için silme işlemini gerçekleştir
+	for _, event := range expiredEvents {
+		// Önce ilişkili fotoğrafları sil
+		photos, err := s.photoService.photoRepo.GetByEventID(event.ID)
+		if err != nil {
+			fmt.Printf("Error retrieving photos for event %d: %v\n", event.ID, err)
+			continue
+		}
+
+		// Her bir fotoğrafı sil
+		for _, photo := range photos {
+			// Depolama servislerinden sil
+			if err := s.photoService.r2Storage.Delete(photo.R2Key); err != nil {
+				fmt.Printf("Error deleting photo %s from R2: %v\n", photo.R2Key, err)
+			}
+
+			if err := s.photoService.ImgStorage.Delete(photo.ImageID); err != nil {
+				fmt.Printf("Error deleting photo %s from Cloudflare Images: %v\n", photo.ImageID, err)
+			}
+		}
+
+		// Veritabanından tüm fotoğrafları sil
+		if err := s.photoService.photoRepo.DeleteByEventID(event.ID); err != nil {
+			fmt.Printf("Error deleting photos for event %d: %v\n", event.ID, err)
+		}
+
+		// Etkinliği sil
+		if err := s.eventRepo.Delete(event.ID); err != nil {
+			fmt.Printf("Error deleting event %d: %v\n", event.ID, err)
+			continue
+		}
+
+		fmt.Printf("Successfully deleted expired event %d (%s) with %d photos\n",
+			event.ID, event.Title, len(photos))
+
+		// Event sahibinin event limitini geri ver
+		user, err := s.userRepo.GetByID(event.UserID)
+		if err == nil { // Kullanıcı hala mevcutsa
+			user.EventLimit++
+			if err := s.userRepo.Update(user); err != nil {
+				fmt.Printf("Error returning event limit to user %d: %v\n", user.ID, err)
+			}
+		}
+	}
+
+	return nil
+}
+
+// GetEventQRCode, belirtilen etkinlik için QR kod PNG formatında döndürür
+func (s *EventService) GetEventQRCode(eventID uint, size int) ([]byte, error) {
+	// Etkinliği getir
+	event, err := s.eventRepo.GetByID(eventID)
+	if err != nil {
+		return nil, fmt.Errorf("event not found: %w", err)
+	}
+
+	// QR kodu oluştur
+	qrCode, err := s.qrService.GenerateQRCode(event.URL, size)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate QR code: %w", err)
+	}
+
+	return qrCode, nil
 }

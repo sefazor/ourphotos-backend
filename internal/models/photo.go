@@ -34,8 +34,6 @@ type PhotoResponse struct {
 	MimeType     string    `json:"mime_type"`
 	PublicURL    string    `json:"public_url"`
 	ThumbnailURL string    `json:"thumbnail_url"`
-	MediumURL    string    `json:"medium_url"`
-	LargeURL     string    `json:"large_url"`
 	IsGuest      bool      `json:"is_guest"`
 	CreatedAt    time.Time `json:"created_at"`
 }

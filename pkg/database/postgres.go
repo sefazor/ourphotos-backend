@@ -40,30 +40,39 @@ func NewDatabase() *gorm.DB {
 	// Örnek paketleri ekle
 	packages := []models.CreditPackage{
 		{
-			Name:        "Mini Package",
-			Description: "Perfect for small events",
-			Credits:     250,
-			EventLimit:  1,
-			PhotoLimit:  250,
-			Price:       7.99,
+			Name:        "100 Credits",
+			Description: "100 image uploads, Unlimited events, 3 months hosting",
+			Credits:     100,
+			EventLimit:  999, // Unlimited events
+			PhotoLimit:  100,
+			Price:       19.99,
 			IsActive:    true,
 		},
 		{
-			Name:        "Pro Package",
-			Description: "Ideal for medium-sized events",
-			Credits:     1000,
-			EventLimit:  3,
-			PhotoLimit:  1000,
-			Price:       13.99,
+			Name:        "300 Credits",
+			Description: "300 image uploads, Unlimited events, 3 months hosting",
+			Credits:     300,
+			EventLimit:  999, // Unlimited events
+			PhotoLimit:  300,
+			Price:       39.99,
 			IsActive:    true,
 		},
 		{
-			Name:        "Enterprise Package",
-			Description: "Best for large events",
-			Credits:     2000,
-			EventLimit:  5,
-			PhotoLimit:  2000,
-			Price:       49.99,
+			Name:        "500 Credits",
+			Description: "500 image uploads, Unlimited events, 3 months hosting",
+			Credits:     500,
+			EventLimit:  999, // Unlimited events
+			PhotoLimit:  500,
+			Price:       59.99,
+			IsActive:    true,
+		},
+		{
+			Name:        "1500 Credits",
+			Description: "1500 image uploads, Unlimited events, 3 months hosting, Priority support",
+			Credits:     1500,
+			EventLimit:  999, // Unlimited events
+			PhotoLimit:  1500,
+			Price:       149.99,
 			IsActive:    true,
 		},
 	}
@@ -97,30 +106,39 @@ func RunMigrations(db *gorm.DB) error {
 	// Örnek paketleri ekle
 	packages := []models.CreditPackage{
 		{
-			Name:        "Mini Package",
-			Description: "Perfect for small events",
-			Credits:     250,
-			EventLimit:  1,
-			PhotoLimit:  250,
-			Price:       7.99,
+			Name:        "100 Credits",
+			Description: "100 image uploads, Unlimited events, 3 months hosting",
+			Credits:     100,
+			EventLimit:  999, // Unlimited events
+			PhotoLimit:  100,
+			Price:       19.99,
 			IsActive:    true,
 		},
 		{
-			Name:        "Pro Package",
-			Description: "Ideal for medium-sized events",
-			Credits:     1000,
-			EventLimit:  3,
-			PhotoLimit:  1000,
-			Price:       13.99,
+			Name:        "300 Credits",
+			Description: "300 image uploads, Unlimited events, 3 months hosting",
+			Credits:     300,
+			EventLimit:  999, // Unlimited events
+			PhotoLimit:  300,
+			Price:       39.99,
 			IsActive:    true,
 		},
 		{
-			Name:        "Enterprise Package",
-			Description: "Best for large events",
-			Credits:     2000,
-			EventLimit:  5,
-			PhotoLimit:  2000,
-			Price:       49.99,
+			Name:        "500 Credits",
+			Description: "500 image uploads, Unlimited events, 3 months hosting",
+			Credits:     500,
+			EventLimit:  999, // Unlimited events
+			PhotoLimit:  500,
+			Price:       59.99,
+			IsActive:    true,
+		},
+		{
+			Name:        "1500 Credits",
+			Description: "1500 image uploads, Unlimited events, 3 months hosting, Priority support",
+			Credits:     1500,
+			EventLimit:  999, // Unlimited events
+			PhotoLimit:  1500,
+			Price:       149.99,
 			IsActive:    true,
 		},
 	}

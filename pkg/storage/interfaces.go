@@ -11,4 +11,5 @@ type ImageService interface {
 	Upload(reader io.Reader) (string, []string, error) // returns imageID, variants, error
 	Delete(imageID string) error
 	GetPublicURL(imageID string) string
+	GetThumbnailURL(imageID string) string
 }

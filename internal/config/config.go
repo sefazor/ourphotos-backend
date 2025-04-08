@@ -18,6 +18,7 @@ type Config struct {
 	CloudflareImages struct {
 		AccountID string
 		Token     string
+		Hash      string // Images CDN URL'leri için hash değeri
 	}
 }
 
@@ -34,10 +35,11 @@ func LoadConfig() *Config {
 	// Cloudflare Images config
 	cfg.CloudflareImages.AccountID = os.Getenv("CLOUDFLARE_ACCOUNT_ID")
 	cfg.CloudflareImages.Token = os.Getenv("CLOUDFLARE_IMAGES_TOKEN")
+	cfg.CloudflareImages.Hash = os.Getenv("CLOUDFLARE_IMAGES_HASH")
 
 	// Debug için
-	fmt.Printf("Debug - Loading Cloudflare config: AccountID=%s, TokenLength=%d\n",
-		cfg.CloudflareImages.AccountID, len(cfg.CloudflareImages.Token))
+	fmt.Printf("Debug - Loading Cloudflare config: AccountID=%s, TokenLength=%d, Hash=%s\n",
+		cfg.CloudflareImages.AccountID, len(cfg.CloudflareImages.Token), cfg.CloudflareImages.Hash)
 
 	return cfg
 }

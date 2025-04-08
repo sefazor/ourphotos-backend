@@ -20,6 +20,7 @@ import (
 	"github.com/sefazor/ourphotos-backend/pkg/database"
 	"github.com/sefazor/ourphotos-backend/pkg/email"
 	"github.com/sefazor/ourphotos-backend/pkg/payment"
+	"github.com/sefazor/ourphotos-backend/pkg/qrcode"
 	"github.com/sefazor/ourphotos-backend/pkg/storage"
 	"github.com/sefazor/ourphotos-backend/pkg/utils"
 )
@@ -59,7 +60,11 @@ func main() {
 	if err != nil {
 		log.Fatal("Failed to initialize R2 storage:", err)
 	}
-	imgStorage := storage.NewCloudflareImages(cfg.CloudflareImages.AccountID, cfg.CloudflareImages.Token)
+	imgStorage := storage.NewCloudflareImages(
+		cfg.CloudflareImages.AccountID,
+		cfg.CloudflareImages.Token,
+		cfg.CloudflareImages.Hash,
+	)
 
 	// Email service
 	emailService := email.NewEmailService()
@@ -74,7 +79,11 @@ func main() {
 		imgStorage,
 		userRepo,
 	)
-	eventService := service.NewEventService(eventRepo, userRepo, photoService)
+
+	// QR Code Service
+	qrService := qrcode.NewQRService("https://ourphotos.co/e/")
+
+	eventService := service.NewEventService(eventRepo, userRepo, photoService, qrService)
 
 	// Stripe service
 	stripeService := payment.NewStripeService(os.Getenv("STRIPE_SECRET_KEY"))
@@ -100,7 +109,11 @@ func main() {
 	creditPackageHandler := handler.NewCreditPackageHandler(packageService)
 
 	// Router
-	app := fiber.New()
+	app := fiber.New(fiber.Config{
+		BodyLimit:    300 * 1024 * 1024, // 300MB limit
+		ReadTimeout:  5 * time.Minute,   // 5 dakika timeout
+		WriteTimeout: 5 * time.Minute,   // 5 dakika timeout
+	})
 
 	// Global Middleware'ler önce tanımlanmalı
 	app.Use(cors.New(cors.Config{
@@ -126,13 +139,14 @@ func main() {
 	auth.Post("/login", authHandler.Login)
 	auth.Post("/forgot-password", authHandler.ForgotPassword)
 	auth.Post("/reset-password", authHandler.ResetPassword)
-	auth.Post("/verify-email", userHandler.CompleteEmailChange)
+	auth.Post("/verify-email", authHandler.VerifyEmail)
+	auth.Post("/resend-verification", authHandler.ResendVerificationEmail)
+	auth.Post("/complete-email-change", userHandler.CompleteEmailChange)
 
 	// Public event routes
 	api.Get("/events/:url", eventHandler.GetEventByURL)
 	api.Post("/events/url/:url/check-password", eventHandler.CheckEventPassword)
 	api.Get("/gallery/:url", photoHandler.GetPublicEventPhotos)
-	api.Post("/events/:eventId/photos", eventHandler.UploadEventPhotos)
 
 	// Public photo routes (authentication middleware'den ÖNCE olmalı)
 	api.Post("/events/photos", photoHandler.UploadPhoto)
@@ -159,6 +173,7 @@ func main() {
 		events.Put("/:id", eventHandler.UpdateEvent)
 		events.Delete("/:id", eventHandler.DeleteEvent)
 		events.Post("/:eventId/photos", eventHandler.UploadEventPhotos)
+		events.Get("/:id/qrcode", eventHandler.GetEventQRCode)
 
 		// Photo routes
 		photos := api.Group("/photos")
@@ -181,6 +196,22 @@ func main() {
 	if port == "" {
 		port = "8080"
 	}
+
+	// Süresi dolmuş etkinlikleri temizleme zamanlayıcısı
+	go func() {
+		// İlk temizleme işlemi
+		if err := eventService.CleanupExpiredEvents(); err != nil {
+			log.Printf("Error cleaning up expired events: %v\n", err)
+		}
+
+		// Her gün aynı saatte çalışacak zamanlayıcı
+		ticker := time.NewTicker(24 * time.Hour)
+		for range ticker.C {
+			if err := eventService.CleanupExpiredEvents(); err != nil {
+				log.Printf("Error cleaning up expired events: %v\n", err)
+			}
+		}
+	}()
 
 	log.Fatal(app.Listen(":" + port))
 }

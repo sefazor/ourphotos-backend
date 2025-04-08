@@ -266,28 +266,11 @@ func (h *EventHandler) UploadEventPhotos(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid form data"))
 	}
 
-	files := form.File["photo"]
+	files := form.File["files"]
 	fmt.Printf("Number of files received: %d\n", len(files))
 	if len(files) == 0 {
 		fmt.Printf("No files found in form. Available fields: %v\n", form.Value)
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("No files uploaded"))
-	}
-
-	// Fotoğraf limit kontrolü
-	if event.PhotoLimit > 0 {
-		currentCount, err := h.eventService.GetEventPhotoCount(uint(eventID))
-		if err != nil {
-			fmt.Printf("Error getting photo count: %v\n", err)
-			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse(err.Error()))
-		}
-		fmt.Printf("Current photo count: %d, Limit: %d, Uploading: %d\n",
-			currentCount, event.PhotoLimit, len(files))
-
-		if currentCount+int64(len(files)) > int64(event.PhotoLimit) {
-			fmt.Printf("Photo limit exceeded. Current: %d, Limit: %d, Trying to add: %d\n",
-				currentCount, event.PhotoLimit, len(files))
-			return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Photo limit exceeded"))
-		}
 	}
 
 	var uploadedPhotos []models.PhotoResponse
@@ -304,4 +287,51 @@ func (h *EventHandler) UploadEventPhotos(c *fiber.Ctx) error {
 
 	fmt.Printf("Successfully uploaded %d photos\n", len(uploadedPhotos))
 	return c.JSON(models.SuccessResponse(uploadedPhotos, "Photos uploaded successfully"))
+}
+
+// GetEventQRCode, belirtilen etkinlik için QR kodu oluşturur ve döndürür
+func (h *EventHandler) GetEventQRCode(c *fiber.Ctx) error {
+	eventID, err := strconv.ParseUint(c.Params("id"), 10, 32)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid event ID"))
+	}
+
+	// Kullanıcı kimliğini kontrol et
+	userIDRaw := c.Locals("userID")
+	if userIDRaw == nil {
+		return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse("Unauthorized"))
+	}
+
+	userID, ok := userIDRaw.(uint)
+	if !ok {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("Invalid user ID format"))
+	}
+
+	// Etkinliğin var olduğunu ve kullanıcıya ait olduğunu kontrol et
+	event, err := h.eventService.GetEvent(uint(eventID))
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse("Event not found"))
+	}
+
+	if event.UserID != userID {
+		return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse("You don't have permission to access this event"))
+	}
+
+	// QR kod boyutunu al, varsayılan 256px
+	sizeStr := c.Query("size", "256")
+	size, err := strconv.Atoi(sizeStr)
+	if err != nil || size <= 0 || size > 1024 {
+		size = 256 // Geçersiz boyut için varsayılan değer
+	}
+
+	// QR kodu oluştur
+	qrCode, err := h.eventService.GetEventQRCode(uint(eventID), size)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse(err.Error()))
+	}
+
+	// QR kodu PNG olarak döndür
+	c.Set("Content-Type", "image/png")
+	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=event-%d-qr.png", eventID))
+	return c.Send(qrCode)
 }

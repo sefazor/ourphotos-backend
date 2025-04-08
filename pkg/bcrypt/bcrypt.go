@@ -32,23 +32,3 @@ func ComparePassword(hashedPassword, password string) error {
 func VerifyHash(hash string) bool {
 	return len(hash) == 60 && hash[0:2] == "$2"
 }
-
-// Debug fonksiyonu - sadece geliştirme aşamasında kullanılmalı
-func DebugHashAndCompare(password string) {
-	fmt.Printf("\nDebug Hash and Compare:\n")
-	fmt.Printf("Original password: %s\n", password)
-
-	hash, err := HashPassword(password)
-	if err != nil {
-		fmt.Printf("Hashing failed: %v\n", err)
-		return
-	}
-	fmt.Printf("Generated hash: %s\n", hash)
-
-	err = ComparePassword(hash, password)
-	if err != nil {
-		fmt.Printf("Comparison failed: %v\n", err)
-		return
-	}
-	fmt.Printf("Password verification successful\n")
-}

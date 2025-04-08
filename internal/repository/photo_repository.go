@@ -51,3 +51,7 @@ func (r *PhotoRepository) GetEventPhotoCount(eventID uint) (int64, error) {
 	err := r.db.Model(&models.Photos{}).Where("event_id = ?", eventID).Count(&count).Error
 	return count, err
 }
+
+func (r *PhotoRepository) DeleteByEventID(eventID uint) error {
+	return r.db.Where("event_id = ?", eventID).Delete(&models.Photos{}).Error
+}

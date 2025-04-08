@@ -1,6 +1,8 @@
 package repository
 
 import (
+	"time"
+
 	"github.com/sefazor/ourphotos-backend/internal/models"
 	"gorm.io/gorm"
 )
@@ -65,16 +67,6 @@ func (r *EventRepository) GetPhotoCount(eventID uint) (int64, error) {
 	return count, result.Error
 }
 
-func (r *EventRepository) GetTotalPhotoLimitsByUserID(userID uint) (int, error) {
-	var total int
-	err := r.db.Model(&models.Event{}).
-		Where("user_id = ?", userID).
-		Select("COALESCE(SUM(photo_limit), 0)").
-		Scan(&total).Error
-
-	return total, err
-}
-
 func (r *EventRepository) GetByUserID(userID uint) ([]models.Event, error) {
 	var events []models.Event
 	err := r.db.Where("user_id = ?", userID).Find(&events).Error
@@ -82,4 +74,11 @@ func (r *EventRepository) GetByUserID(userID uint) ([]models.Event, error) {
 		return nil, err
 	}
 	return events, nil
+}
+
+// FindExpiredEvents belirtilen tarihten önce süresi dolan etkinlikleri bulur
+func (r *EventRepository) FindExpiredEvents(currentTime time.Time) ([]models.Event, error) {
+	var expiredEvents []models.Event
+	err := r.db.Where("expires_at < ?", currentTime).Find(&expiredEvents).Error
+	return expiredEvents, err
 }

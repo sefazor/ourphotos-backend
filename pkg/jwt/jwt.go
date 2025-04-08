@@ -8,6 +8,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
+// Token süresi (7 gün)
+const TokenExpiryLogin = 7 * 24 * time.Hour
+
 func GenerateToken(email string, userID uint) (string, error) {
 	secretKey := []byte(os.Getenv("JWT_SECRET"))
 
@@ -15,7 +18,7 @@ func GenerateToken(email string, userID uint) (string, error) {
 		"email":   email,
 		"sub":     email,
 		"user_id": userID,
-		"exp":     time.Now().Add(time.Hour * 24 * 7).Unix(),
+		"exp":     time.Now().Add(TokenExpiryLogin).Unix(),
 		"iat":     time.Now().Unix(),
 	}
 

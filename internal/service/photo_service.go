@@ -7,6 +7,7 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -49,11 +50,6 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 		return nil, err
 	}
 
-	// Event'in photo limitini kontrol et
-	if event.PhotoLimit <= 0 {
-		return nil, errors.New("event photo limit exceeded")
-	}
-
 	// Event sahibinin limitini kontrol et
 	eventOwner, err := s.userRepo.GetByID(event.UserID)
 	if err != nil {
@@ -72,10 +68,12 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 	}
 
 	// Eğer giriş yapmış kullanıcı ise limit kontrolü yap
+	var user *models.User
 	if userID > 0 {
 		fmt.Printf("Checking limits for user: %d\n", userID)
 
-		user, err := s.userRepo.GetByID(userID)
+		var err error
+		user, err = s.userRepo.GetByID(userID)
 		if err != nil {
 			fmt.Printf("Error getting user: %v\n", err)
 			return nil, err
@@ -88,15 +86,7 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 			return nil, errors.New("photo limit exceeded")
 		}
 
-		// Fotoğraf başarıyla yüklendiyse limiti düş
-		user.PhotoLimit--
-		fmt.Printf("Decreasing photo limit to: %d\n", user.PhotoLimit)
-
-		if err := s.userRepo.Update(user); err != nil {
-			fmt.Printf("Error updating user: %v\n", err)
-			return nil, err
-		}
-		fmt.Printf("Successfully updated user photo limit\n")
+		// ÖNEMLİ: Limiti henüz düşürme, yükleme başarılı olduktan sonra düşür
 	} else {
 		fmt.Printf("Guest upload - no limit check needed\n")
 	}
@@ -108,26 +98,114 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 	}
 	defer fileContent.Close()
 
-	// Dosya içeriğini byte array'e oku
-	fileBytes, err := io.ReadAll(fileContent)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
+	// MIME type algılama için sadece başlangıç kısmını oku
+	headerBytes := make([]byte, 512)
+	_, err = fileContent.Read(headerBytes)
+	if err != nil && err != io.EOF {
+		return nil, fmt.Errorf("failed to read file header: %w", err)
 	}
+
+	// Dosyayı başa sar
+	if _, err = fileContent.Seek(0, io.SeekStart); err != nil {
+		return nil, fmt.Errorf("failed to seek file: %w", err)
+	}
+
+	// MIME type'ı belirle
+	mimeType := http.DetectContentType(headerBytes)
 
 	// Dosya adı oluştur
 	fileName := generateUniqueFileName()
 
-	// R2'ye yükle
-	if err := s.r2Storage.Upload(fileName, bytes.NewReader(fileBytes)); err != nil {
-		return nil, fmt.Errorf("failed to upload to R2: %w", err)
+	// Dosya içeriğini okuyalım - MultipartFileHeader'ı bir kez kullanma sınırlamasını aşmak için
+	fmt.Printf("Dosya içeriğini okuyoruz...\n")
+	fileData, err := io.ReadAll(fileContent)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read file content: %w", err)
+	}
+	fmt.Printf("Dosya içeriği okundu, boyut: %d bytes\n", len(fileData))
+
+	// Her iki yükleme için ayrı okuyucular oluştur
+	r2Reader := bytes.NewReader(fileData)
+	cfReader := bytes.NewReader(fileData)
+
+	// Goroutine ile eş zamanlı yükleme yap
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	var r2Err, cfErr error
+	var imageID string
+
+	// Timeout ekle
+	uploadDone := make(chan bool, 1)
+	go func() {
+		// R2'ye yükleme goroutine'i
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					r2Err = fmt.Errorf("panic in R2 upload: %v", r)
+					fmt.Printf("PANIC in R2 upload: %v\n", r)
+				}
+			}()
+
+			fmt.Printf("Starting R2 upload for file: %s\n", fileName)
+			r2Err = s.r2Storage.Upload(fileName, r2Reader)
+			if r2Err != nil {
+				r2Err = fmt.Errorf("failed to upload to R2: %w", r2Err)
+				fmt.Printf("Error during R2 upload: %v\n", r2Err)
+			} else {
+				fmt.Printf("R2 upload completed successfully\n")
+			}
+		}()
+
+		// Cloudflare Images'a yükleme goroutine'i
+		go func() {
+			defer wg.Done()
+			defer func() {
+				if r := recover(); r != nil {
+					cfErr = fmt.Errorf("panic in Cloudflare Images upload: %v", r)
+					fmt.Printf("PANIC in Cloudflare Images upload: %v\n", r)
+				}
+			}()
+
+			fmt.Printf("Starting Cloudflare Images upload\n")
+			// Sadece Upload'ı kullan, dosya adı önemli değil
+			imageID, _, cfErr = s.ImgStorage.Upload(cfReader)
+			if cfErr != nil {
+				cfErr = fmt.Errorf("failed to upload to Cloudflare Images: %w", cfErr)
+				fmt.Printf("Error during Cloudflare Images upload: %v\n", cfErr)
+			} else {
+				fmt.Printf("Cloudflare Images upload completed successfully, image ID: %s\n", imageID)
+			}
+		}()
+
+		// Goroutine'lerin bitmesini bekle
+		wg.Wait()
+		uploadDone <- true
+	}()
+
+	// Yükleme için 60 saniye timeout
+	select {
+	case <-uploadDone:
+		fmt.Printf("All uploads completed\n")
+	case <-time.After(60 * time.Second):
+		return nil, fmt.Errorf("upload timed out after 60 seconds")
 	}
 
-	// Cloudflare Images'a yükle
-	imageID, _, err := s.ImgStorage.Upload(bytes.NewReader(fileBytes))
-	if err != nil {
+	// Hataları kontrol et
+	if r2Err != nil {
+		fmt.Printf("R2 upload failed: %v\n", r2Err)
+		return nil, r2Err
+	}
+
+	if cfErr != nil {
 		// R2'den dosyayı sil
-		_ = s.r2Storage.Delete(fileName)
-		return nil, fmt.Errorf("failed to upload to Cloudflare Images: %w", err)
+		fmt.Printf("Cloudflare Images upload failed: %v - cleaning up R2 file\n", cfErr)
+		delErr := s.r2Storage.Delete(fileName)
+		if delErr != nil {
+			fmt.Printf("Warning: Failed to clean up R2 file after Cloudflare error: %v\n", delErr)
+		}
+		return nil, cfErr
 	}
 
 	// Fotoğraf kaydı oluştur
@@ -136,7 +214,7 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 		UserID:     userID,
 		FileName:   file.Filename,
 		FileSize:   file.Size,
-		MimeType:   file.Header.Get("Content-Type"),
+		MimeType:   mimeType,
 		R2Key:      fileName,
 		ImageID:    imageID,
 		PublicURL:  s.ImgStorage.GetPublicURL(imageID),
@@ -163,41 +241,47 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 		MimeType:     photo.MimeType,
 		PublicURL:    s.ImgStorage.GetPublicURL(photo.ImageID),
 		ThumbnailURL: s.ImgStorage.GetThumbnailURL(photo.ImageID),
-		MediumURL:    s.ImgStorage.GetMediumURL(photo.ImageID),
-		LargeURL:     s.ImgStorage.GetLargeURL(photo.ImageID),
 		IsGuest:      photo.IsGuest,
 		CreatedAt:    photo.UploadedAt,
 	}
 
-	// Fotoğraf başarıyla yüklendiyse limitleri düş
-	eventOwner.PhotoLimit--
-	if err := s.userRepo.Update(eventOwner); err != nil {
-		return nil, err
+	// ÖNEMLİ: Şimdi başarılı yüklemeden sonra limitleri düşür
+
+	// 1. Kullanıcı limiti güncelleme (eğer giriş yapmış bir kullanıcıysa)
+	if userID > 0 && user != nil {
+		// Fotoğraf başarıyla yüklendiyse limiti düş
+		user.PhotoLimit--
+		fmt.Printf("Decreasing user photo limit to: %d\n", user.PhotoLimit)
+
+		if err := s.userRepo.Update(user); err != nil {
+			// Bu noktada fotoğraf zaten yüklendi, sadece kredi düşürme başarısız oldu
+			// Log atıp devam edebiliriz, ama ideal olan işlemi geri almak olurdu
+			fmt.Printf("Warning: Failed to update user photo limit: %v\n", err)
+		} else {
+			fmt.Printf("Successfully updated user photo limit\n")
+		}
 	}
 
-	// Event'in photo limitini düş
-	event.PhotoLimit--
+	// 2. Event owner limiti güncelleme
+	eventOwner.PhotoLimit--
+	if err := s.userRepo.Update(eventOwner); err != nil {
+		fmt.Printf("Warning: Failed to update event owner photo limit: %v\n", err)
+	}
+
+	// 3. Event'in fotoğraf sayısını artır
 	event.PhotoCount++
 	if err := s.eventRepo.Update(event); err != nil {
-		return nil, err
+		fmt.Printf("Warning: Failed to update event photo count: %v\n", err)
 	}
 
 	return response, nil
 }
 
 func (s *PhotoService) GetEventPhotos(eventID uint, userID uint) ([]models.Photos, error) {
-	// Önce event'i kontrol et
-	event, err := s.eventRepo.GetByID(eventID)
+	// Önce event'in var olup olmadığını kontrol et
+	_, err := s.eventRepo.GetByID(eventID)
 	if err != nil {
 		return nil, errors.New("event not found")
-	}
-
-	// Event'in public olup olmadığını kontrol et
-	if !event.IsPublic {
-		// Event public değilse, sadece event sahibi görebilir
-		if event.UserID != userID {
-			return nil, errors.New("unauthorized")
-		}
 	}
 
 	// Fotoğrafları getir
@@ -238,11 +322,6 @@ func (s *PhotoService) GetPublicEventPhotos(eventURL string) ([]models.Photos, e
 	event, err := s.eventRepo.GetByURL(eventURL)
 	if err != nil {
 		return nil, errors.New("event not found")
-	}
-
-	// Event public değilse hata dön
-	if !event.IsPublic {
-		return nil, errors.New("event is not public")
 	}
 
 	// Event'in fotoğraflarını getir

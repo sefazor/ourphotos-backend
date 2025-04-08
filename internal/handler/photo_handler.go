@@ -42,8 +42,6 @@ func (h *PhotoHandler) GetEventPhotos(c *fiber.Ctx) error {
 			MimeType:     photo.MimeType,
 			PublicURL:    photo.PublicURL,
 			ThumbnailURL: h.photoService.ImgStorage.GetThumbnailURL(photo.ImageID),
-			MediumURL:    h.photoService.ImgStorage.GetMediumURL(photo.ImageID),
-			LargeURL:     h.photoService.ImgStorage.GetLargeURL(photo.ImageID),
 			IsGuest:      photo.IsGuest,
 			CreatedAt:    photo.CreatedAt,
 		})
@@ -107,8 +105,6 @@ func (h *PhotoHandler) GetPublicEventPhotos(c *fiber.Ctx) error {
 			MimeType:     photo.MimeType,
 			PublicURL:    photo.PublicURL,
 			ThumbnailURL: h.photoService.ImgStorage.GetThumbnailURL(photo.ImageID),
-			MediumURL:    h.photoService.ImgStorage.GetMediumURL(photo.ImageID),
-			LargeURL:     h.photoService.ImgStorage.GetLargeURL(photo.ImageID),
 			IsGuest:      photo.IsGuest,
 			CreatedAt:    photo.CreatedAt,
 		})

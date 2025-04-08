@@ -86,7 +86,7 @@ func (s *PaymentService) CreateCheckoutSession(userID uint, packageID uint) (*mo
 		PhotoLimit:      creditPackage.PhotoLimit,
 		Price:           creditPackage.Price,
 		StripeSessionID: session.ID,
-		Status:          "pending",
+		Status:          models.PurchaseStatusPending,
 	}
 
 	if err := s.purchaseRepo.Create(purchase); err != nil {
@@ -121,7 +121,7 @@ func (s *PaymentService) HandleStripeWebhook(event *stripe.Event) error {
 			return err
 		}
 
-		purchase.Status = "completed"
+		purchase.Status = models.PurchaseStatusCompleted
 		if err := s.purchaseRepo.Update(purchase); err != nil {
 			return err
 		}
@@ -137,6 +137,71 @@ func (s *PaymentService) HandleStripeWebhook(event *stripe.Event) error {
 		user.PhotoLimit += purchase.PhotoLimit
 
 		return s.userRepo.Update(user)
+
+	case "checkout.session.expired", "checkout.session.async_payment_failed":
+		var session stripe.CheckoutSession
+		err := json.Unmarshal(event.Data.Raw, &session)
+		if err != nil {
+			return err
+		}
+
+		// Purchase'ı bul ve güncelle
+		purchase, err := s.purchaseRepo.GetBySessionID(session.ID)
+		if err != nil {
+			return err
+		}
+
+		purchase.Status = models.PurchaseStatusFailed
+		return s.purchaseRepo.Update(purchase)
+
+	case "charge.refunded":
+		var charge stripe.Charge
+		err := json.Unmarshal(event.Data.Raw, &charge)
+		if err != nil {
+			return err
+		}
+
+		// Eğer Charge'da PaymentIntent varsa ve bu bir checkout session ile ilişkiliyse
+		if charge.PaymentIntent != nil && charge.PaymentIntent.Metadata != nil {
+			sessionID, ok := charge.PaymentIntent.Metadata["checkout_session_id"]
+			if !ok {
+				return nil // Bizim sistemimizle ilgisi yok
+			}
+
+			// Purchase'ı bul ve güncelle
+			purchase, err := s.purchaseRepo.GetBySessionID(sessionID)
+			if err != nil {
+				return err
+			}
+
+			purchase.Status = models.PurchaseStatusRefunded
+
+			// Kullanıcıyı bul ve limitlerini geri al
+			user, err := s.userRepo.GetByID(purchase.UserID)
+			if err != nil {
+				return err
+			}
+
+			// Limitleri düşür (eksi değere düşmemesine dikkat et)
+			if user.EventLimit >= purchase.EventLimit {
+				user.EventLimit -= purchase.EventLimit
+			} else {
+				user.EventLimit = 0
+			}
+
+			if user.PhotoLimit >= purchase.PhotoLimit {
+				user.PhotoLimit -= purchase.PhotoLimit
+			} else {
+				user.PhotoLimit = 0
+			}
+
+			// Önce purchase'ı, sonra user'ı güncelle
+			if err := s.purchaseRepo.Update(purchase); err != nil {
+				return err
+			}
+
+			return s.userRepo.Update(user)
+		}
 	}
 
 	return nil

@@ -9,7 +9,6 @@ type User struct {
 	FullName   string    `json:"full_name" gorm:"not null"`
 	Email      string    `json:"email" gorm:"unique;not null"`
 	Password   string    `json:"-" gorm:"not null"`
-	Name       string    `json:"name"`
 	EventLimit int       `json:"event_limit" gorm:"default:1"`
 	PhotoLimit int       `json:"photo_limit" gorm:"default:20"`
 	IsVerified bool      `json:"is_verified" gorm:"default:false"`
