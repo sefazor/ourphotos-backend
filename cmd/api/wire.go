@@ -1,58 +1,76 @@
-package wire
+package main
 
 import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/google/wire"
-	"github.com/sefazor/ourphotos-backend/internal/controller"
+	"github.com/sefazor/ourphotos-backend/internal/config"
 	"github.com/sefazor/ourphotos-backend/internal/handler"
+	"github.com/sefazor/ourphotos-backend/internal/middleware"
 	"github.com/sefazor/ourphotos-backend/internal/repository"
 	"github.com/sefazor/ourphotos-backend/internal/service"
-	"github.com/sefazor/ourphotos-backend/pkg/config"
+	"github.com/sefazor/ourphotos-backend/pkg/email"
+	"github.com/sefazor/ourphotos-backend/pkg/payment"
+	"github.com/sefazor/ourphotos-backend/pkg/qrcode"
 	"github.com/sefazor/ourphotos-backend/pkg/storage"
 	"github.com/sefazor/ourphotos-backend/pkg/utils"
 )
 
-func InitializeAPI(config *config.Config) (*fiber.App, error) {
+// InitializeAPI wire yapısını tanımlar, uygulamanın bağımlılık enjeksiyonu için kullanılır
+func InitializeAPI(cfg *config.Config) (*fiber.App, error) {
 	wire.Build(
 		// Repositories
 		repository.NewEventRepository,
 		repository.NewUserRepository,
 		repository.NewPhotoRepository,
+		repository.NewCreditPackageRepository,
+		repository.NewUserCreditPurchaseRepository,
 
-		// Storage
+		// Storage & External Services
 		storage.NewCloudflareStorage,
 		storage.NewCloudflareImages,
+		email.NewEmailService,
+		payment.NewStripeService,
+		qrcode.NewQRService,
 
 		// Services
-		wire.Struct(new(service.EventService), "*"),
-		wire.Struct(new(service.UserService), "*"),
-		wire.Struct(new(service.PhotoService), "*"),
-
-		// Controllers
-		wire.Struct(new(controller.EventController), "*"),
-		wire.Struct(new(controller.UserController), "*"),
-		wire.Struct(new(controller.PhotoController), "*"),
+		service.NewAuthService,
+		service.NewUserService,
+		service.NewEventService,
+		service.NewPhotoService,
+		service.NewPackageService,
+		service.NewPaymentService,
 
 		// Validator
 		utils.NewValidator,
 
 		// Handlers
-		wire.Struct(new(handler.EventHandler), "*"),
-		wire.Struct(new(handler.UserHandler), "*"),
-		wire.Struct(new(handler.PhotoHandler), "*"),
+		handler.NewAuthHandler,
+		handler.NewEventHandler,
+		handler.NewUserHandler,
+		handler.NewPhotoHandler,
+		handler.NewPaymentHandler,
+		handler.NewCreditPackageHandler,
 
-		// App
-		NewFiberApp,
+		// Middleware
+		middleware.AuthMiddleware,
+
+		// App initialization
+		initializeFiberApp,
 	)
 	return nil, nil
 }
 
-func NewFiberApp(
+// initializeFiberApp fiber uygulama örneğini oluşturur ve döndürür
+func initializeFiberApp(
+	authHandler *handler.AuthHandler,
 	eventHandler *handler.EventHandler,
 	userHandler *handler.UserHandler,
 	photoHandler *handler.PhotoHandler,
-	config *config.Config,
+	paymentHandler *handler.PaymentHandler,
+	packageHandler *handler.CreditPackageHandler,
+	authMiddleware func() fiber.Handler,
 ) *fiber.App {
-	// ... fiber app setup ...
+	app := fiber.New()
+	// Routing ve middleware yapılandırması burada yapılabilir
 	return app
 }

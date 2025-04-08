@@ -320,12 +320,6 @@ func (s *EventService) DeleteEvent(eventID uint, userID uint) error {
 
 	// Her bir fotoğrafı depolama servislerinden sil
 	for _, photo := range photos {
-		// R2'den sil
-		if err := s.photoService.r2Storage.Delete(photo.R2Key); err != nil {
-			// Hata loga kaydedilmeli ama işleme devam edilmeli
-			fmt.Printf("Error deleting photo %s from R2: %v\n", photo.R2Key, err)
-		}
-
 		// Cloudflare Images'dan sil
 		if err := s.photoService.ImgStorage.Delete(photo.ImageID); err != nil {
 			// Hata loga kaydedilmeli ama işleme devam edilmeli
@@ -403,11 +397,7 @@ func (s *EventService) CleanupExpiredEvents() error {
 
 		// Her bir fotoğrafı sil
 		for _, photo := range photos {
-			// Depolama servislerinden sil
-			if err := s.photoService.r2Storage.Delete(photo.R2Key); err != nil {
-				fmt.Printf("Error deleting photo %s from R2: %v\n", photo.R2Key, err)
-			}
-
+			// Cloudflare Images'dan sil
 			if err := s.photoService.ImgStorage.Delete(photo.ImageID); err != nil {
 				fmt.Printf("Error deleting photo %s from Cloudflare Images: %v\n", photo.ImageID, err)
 			}

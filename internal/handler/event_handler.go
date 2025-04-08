@@ -54,11 +54,9 @@ func (h *EventHandler) CreateEvent(c *fiber.Ctx) error {
 }
 
 func (h *EventHandler) GetEvent(c *fiber.Ctx) error {
-	eventID, err := strconv.ParseUint(c.Params("id"), 10, 32)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid event ID"))
-	}
+	url := c.Params("url")
 
+	// Güvenli type assertion
 	userIDRaw := c.Locals("userID")
 	if userIDRaw == nil {
 		fmt.Printf("userID is nil in context\n")
@@ -71,9 +69,9 @@ func (h *EventHandler) GetEvent(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("Invalid user ID format"))
 	}
 
-	fmt.Printf("Getting event %d for userID: %d\n", eventID, userID)
+	fmt.Printf("Getting event with URL: %s for userID: %d\n", url, userID)
 
-	event, err := h.eventService.GetEvent(uint(eventID))
+	event, err := h.eventService.GetEventByURL(url)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse("Event not found"))
 	}
@@ -123,10 +121,7 @@ func (h *EventHandler) GetUserEvents(c *fiber.Ctx) error {
 }
 
 func (h *EventHandler) UpdateEvent(c *fiber.Ctx) error {
-	eventID, err := strconv.ParseUint(c.Params("id"), 10, 32)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid event ID"))
-	}
+	url := c.Params("url")
 
 	var req models.UpdateEventRequest
 	if err := c.BodyParser(&req); err != nil {
@@ -143,19 +138,27 @@ func (h *EventHandler) UpdateEvent(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("Invalid user ID format"))
 	}
 
-	event, err := h.eventService.UpdateEvent(uint(eventID), userID, req)
+	// URL'ye göre event'i al
+	event, err := h.eventService.GetEventByURL(url)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse("Event not found"))
+	}
+
+	// Kullanıcı bu event'i güncelleme yetkisine sahip mi?
+	if event.UserID != userID {
+		return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse("You don't have permission to update this event"))
+	}
+
+	updatedEvent, err := h.eventService.UpdateEvent(event.ID, userID, req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}
 
-	return c.JSON(models.SuccessResponse(event, "Event updated successfully"))
+	return c.JSON(models.SuccessResponse(updatedEvent, "Event updated successfully"))
 }
 
 func (h *EventHandler) DeleteEvent(c *fiber.Ctx) error {
-	eventID, err := strconv.ParseUint(c.Params("id"), 10, 32)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid event ID"))
-	}
+	url := c.Params("url")
 
 	userIDRaw := c.Locals("userID")
 	if userIDRaw == nil {
@@ -167,7 +170,18 @@ func (h *EventHandler) DeleteEvent(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("Invalid user ID format"))
 	}
 
-	if err := h.eventService.DeleteEvent(uint(eventID), userID); err != nil {
+	// URL'ye göre event'i al
+	event, err := h.eventService.GetEventByURL(url)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse("Event not found"))
+	}
+
+	// Kullanıcı bu event'i silme yetkisine sahip mi?
+	if event.UserID != userID {
+		return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse("You don't have permission to delete this event"))
+	}
+
+	if err := h.eventService.DeleteEvent(event.ID, userID); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
 	}
 
@@ -230,11 +244,7 @@ func (h *EventHandler) CheckEventPassword(c *fiber.Ctx) error {
 }
 
 func (h *EventHandler) UploadEventPhotos(c *fiber.Ctx) error {
-	eventID, err := strconv.ParseUint(c.Params("eventId"), 10, 32)
-	if err != nil {
-		fmt.Printf("Error parsing eventId: %v\n", err)
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid event ID"))
-	}
+	url := c.Params("url")
 
 	// Kullanıcı varsa al, yoksa 0 (misafir)
 	var userID uint = 0
@@ -248,7 +258,7 @@ func (h *EventHandler) UploadEventPhotos(c *fiber.Ctx) error {
 	}
 
 	// Event kontrolü
-	event, err := h.eventService.GetEvent(uint(eventID))
+	event, err := h.eventService.GetEventByURL(url)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse("Event not found"))
 	}
@@ -276,7 +286,7 @@ func (h *EventHandler) UploadEventPhotos(c *fiber.Ctx) error {
 	var uploadedPhotos []models.PhotoResponse
 	for i, file := range files {
 		fmt.Printf("Uploading file %d/%d for userID: %d\n", i+1, len(files), userID)
-		photo, err := h.eventService.UploadEventPhoto(uint(eventID), userID, file)
+		photo, err := h.eventService.UploadEventPhoto(event.ID, userID, file)
 		if err != nil {
 			fmt.Printf("Error uploading file %s: %v\n", file.Filename, err)
 			return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse(err.Error()))
@@ -291,10 +301,7 @@ func (h *EventHandler) UploadEventPhotos(c *fiber.Ctx) error {
 
 // GetEventQRCode, belirtilen etkinlik için QR kodu oluşturur ve döndürür
 func (h *EventHandler) GetEventQRCode(c *fiber.Ctx) error {
-	eventID, err := strconv.ParseUint(c.Params("id"), 10, 32)
-	if err != nil {
-		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid event ID"))
-	}
+	url := c.Params("url")
 
 	// Kullanıcı kimliğini kontrol et
 	userIDRaw := c.Locals("userID")
@@ -307,12 +314,13 @@ func (h *EventHandler) GetEventQRCode(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("Invalid user ID format"))
 	}
 
-	// Etkinliğin var olduğunu ve kullanıcıya ait olduğunu kontrol et
-	event, err := h.eventService.GetEvent(uint(eventID))
+	// Event'i al
+	event, err := h.eventService.GetEventByURL(url)
 	if err != nil {
 		return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse("Event not found"))
 	}
 
+	// Kullanıcı bu event'e erişim yetkisine sahip mi?
 	if event.UserID != userID {
 		return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse("You don't have permission to access this event"))
 	}
@@ -325,13 +333,13 @@ func (h *EventHandler) GetEventQRCode(c *fiber.Ctx) error {
 	}
 
 	// QR kodu oluştur
-	qrCode, err := h.eventService.GetEventQRCode(uint(eventID), size)
+	qrCode, err := h.eventService.GetEventQRCode(event.ID, size)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse(err.Error()))
 	}
 
 	// QR kodu PNG olarak döndür
 	c.Set("Content-Type", "image/png")
-	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=event-%d-qr.png", eventID))
+	c.Set("Content-Disposition", fmt.Sprintf("attachment; filename=event-%s-qr.png", url))
 	return c.Send(qrCode)
 }

@@ -2,12 +2,12 @@ package service
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -20,23 +20,20 @@ type PhotoService struct {
 	photoRepo  *repository.PhotoRepository
 	eventRepo  *repository.EventRepository
 	userRepo   *repository.UserRepository
-	r2Storage  *storage.CloudflareStorage
 	ImgStorage *storage.CloudflareImages
 }
 
 func NewPhotoService(
 	photoRepo *repository.PhotoRepository,
 	eventRepo *repository.EventRepository,
-	r2Storage *storage.CloudflareStorage,
 	ImgStorage *storage.CloudflareImages,
 	userRepo *repository.UserRepository,
 ) *PhotoService {
 	return &PhotoService{
 		photoRepo:  photoRepo,
 		eventRepo:  eventRepo,
-		r2Storage:  r2Storage,
-		ImgStorage: ImgStorage,
 		userRepo:   userRepo,
+		ImgStorage: ImgStorage,
 	}
 }
 
@@ -113,9 +110,6 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 	// MIME type'ı belirle
 	mimeType := http.DetectContentType(headerBytes)
 
-	// Dosya adı oluştur
-	fileName := generateUniqueFileName()
-
 	// Dosya içeriğini okuyalım - MultipartFileHeader'ı bir kez kullanma sınırlamasını aşmak için
 	fmt.Printf("Dosya içeriğini okuyoruz...\n")
 	fileData, err := io.ReadAll(fileContent)
@@ -124,89 +118,47 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 	}
 	fmt.Printf("Dosya içeriği okundu, boyut: %d bytes\n", len(fileData))
 
-	// Her iki yükleme için ayrı okuyucular oluştur
-	r2Reader := bytes.NewReader(fileData)
+	// Cloudflare Images'a yükleme yap
 	cfReader := bytes.NewReader(fileData)
 
-	// Goroutine ile eş zamanlı yükleme yap
-	var wg sync.WaitGroup
-	wg.Add(2)
+	// Yükleme işlemi için timeout ekle
+	uploadCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
 
-	var r2Err, cfErr error
-	var imageID string
+	// Yükleme işlemini başlat
+	uploadDone := make(chan struct {
+		imageID string
+		err     error
+	}, 1)
 
-	// Timeout ekle
-	uploadDone := make(chan bool, 1)
 	go func() {
-		// R2'ye yükleme goroutine'i
-		go func() {
-			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					r2Err = fmt.Errorf("panic in R2 upload: %v", r)
-					fmt.Printf("PANIC in R2 upload: %v\n", r)
-				}
-			}()
-
-			fmt.Printf("Starting R2 upload for file: %s\n", fileName)
-			r2Err = s.r2Storage.Upload(fileName, r2Reader)
-			if r2Err != nil {
-				r2Err = fmt.Errorf("failed to upload to R2: %w", r2Err)
-				fmt.Printf("Error during R2 upload: %v\n", r2Err)
-			} else {
-				fmt.Printf("R2 upload completed successfully\n")
-			}
-		}()
-
-		// Cloudflare Images'a yükleme goroutine'i
-		go func() {
-			defer wg.Done()
-			defer func() {
-				if r := recover(); r != nil {
-					cfErr = fmt.Errorf("panic in Cloudflare Images upload: %v", r)
-					fmt.Printf("PANIC in Cloudflare Images upload: %v\n", r)
-				}
-			}()
-
-			fmt.Printf("Starting Cloudflare Images upload\n")
-			// Sadece Upload'ı kullan, dosya adı önemli değil
-			imageID, _, cfErr = s.ImgStorage.Upload(cfReader)
-			if cfErr != nil {
-				cfErr = fmt.Errorf("failed to upload to Cloudflare Images: %w", cfErr)
-				fmt.Printf("Error during Cloudflare Images upload: %v\n", cfErr)
-			} else {
-				fmt.Printf("Cloudflare Images upload completed successfully, image ID: %s\n", imageID)
-			}
-		}()
-
-		// Goroutine'lerin bitmesini bekle
-		wg.Wait()
-		uploadDone <- true
+		// Cloudflare Images'a yükleme
+		fmt.Printf("Starting Cloudflare Images upload\n")
+		imageID, _, err := s.ImgStorage.Upload(cfReader)
+		uploadDone <- struct {
+			imageID string
+			err     error
+		}{imageID, err}
 	}()
 
-	// Yükleme için 60 saniye timeout
+	// Yükleme işleminin tamamlanmasını bekle veya timeout
+	var imageID string
+	var cfErr error
 	select {
-	case <-uploadDone:
-		fmt.Printf("All uploads completed\n")
-	case <-time.After(60 * time.Second):
+	case <-uploadCtx.Done():
 		return nil, fmt.Errorf("upload timed out after 60 seconds")
+	case result := <-uploadDone:
+		imageID = result.imageID
+		cfErr = result.err
 	}
 
-	// Hataları kontrol et
-	if r2Err != nil {
-		fmt.Printf("R2 upload failed: %v\n", r2Err)
-		return nil, r2Err
-	}
-
+	// Hata kontrolü
 	if cfErr != nil {
-		// R2'den dosyayı sil
-		fmt.Printf("Cloudflare Images upload failed: %v - cleaning up R2 file\n", cfErr)
-		delErr := s.r2Storage.Delete(fileName)
-		if delErr != nil {
-			fmt.Printf("Warning: Failed to clean up R2 file after Cloudflare error: %v\n", delErr)
-		}
+		fmt.Printf("Cloudflare Images upload failed: %v\n", cfErr)
 		return nil, cfErr
 	}
+
+	fmt.Printf("Cloudflare Images upload completed successfully, image ID: %s\n", imageID)
 
 	// Fotoğraf kaydı oluştur
 	photo := &models.Photos{
@@ -215,7 +167,6 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 		FileName:   file.Filename,
 		FileSize:   file.Size,
 		MimeType:   mimeType,
-		R2Key:      fileName,
 		ImageID:    imageID,
 		PublicURL:  s.ImgStorage.GetPublicURL(imageID),
 		IsGuest:    userID == 0,
@@ -225,8 +176,7 @@ func (s *PhotoService) UploadPhoto(eventID uint, userID uint, file *multipart.Fi
 	// Veritabanına kaydet
 	err = s.photoRepo.Create(photo)
 	if err != nil {
-		// Hata durumunda yüklenen dosyaları sil
-		_ = s.r2Storage.Delete(fileName)
+		// Hata durumunda yüklenen resmi sil
 		_ = s.ImgStorage.Delete(imageID)
 		return nil, err
 	}
@@ -304,11 +254,7 @@ func (s *PhotoService) DeletePhoto(photoID uint, userID uint) error {
 		return errors.New("unauthorized")
 	}
 
-	// Önce storage'dan sil
-	if err := s.r2Storage.Delete(photo.R2Key); err != nil {
-		return fmt.Errorf("failed to delete from storage: %w", err)
-	}
-
+	// Cloudflare Images'dan sil
 	if err := s.ImgStorage.Delete(photo.ImageID); err != nil {
 		return fmt.Errorf("failed to delete from image service: %w", err)
 	}

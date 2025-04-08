@@ -10,30 +10,30 @@ import (
 	"time"
 )
 
+const (
+	VariantPublic    = "public"
+	VariantThumbnail = "thumbnail"
+)
+
 type CloudflareImages struct {
 	accountID   string
 	apiToken    string
 	baseURL     string
-	client      *http.Client
-	accountHash string // Cloudflare Images URL'leri için özel hash değeri
+	httpClient  *http.Client
+	accountHash string
 }
-
-const (
-	VariantPublic    = "public"    // Orijinal boyut
-	VariantThumbnail = "thumbnail" // Thumbnail boyut (örn. 100x100)
-)
 
 // CloudflareImageResponse represents the response from Cloudflare Images API
 type CloudflareImageResponse struct {
 	Success bool `json:"success"`
-	Result  struct {
-		ID       string   `json:"id"`
-		Variants []string `json:"variants"`
-	} `json:"result"`
-	Errors []struct {
+	Errors  []struct {
 		Code    int    `json:"code"`
 		Message string `json:"message"`
 	} `json:"errors"`
+	Result struct {
+		ID       string   `json:"id"`
+		Variants []string `json:"variants"`
+	} `json:"result"`
 }
 
 func NewCloudflareImages(accountID, token, accountHash string) *CloudflareImages {
@@ -45,14 +45,16 @@ func NewCloudflareImages(accountID, token, accountHash string) *CloudflareImages
 			MaxIdleConnsPerHost: 100,
 			MaxConnsPerHost:     100,
 			IdleConnTimeout:     90 * time.Second,
+			DisableCompression:  false,
+			ForceAttemptHTTP2:   true,
 		},
 	}
 
 	return &CloudflareImages{
 		accountID:   accountID,
 		apiToken:    token,
-		baseURL:     "https://api.cloudflare.com/client/v4",
-		client:      client,
+		baseURL:     "https://api.cloudflare.com/client/v4/accounts/%s/images/v1",
+		httpClient:  client,
 		accountHash: accountHash,
 	}
 }
@@ -120,7 +122,7 @@ func (c *CloudflareImages) UploadWithFilename(reader io.Reader, filename string)
 	}
 
 	// HTTP isteği için URL hazırla
-	cloudflareURL := fmt.Sprintf("%s/accounts/%s/images/v1", c.baseURL, c.accountID)
+	cloudflareURL := fmt.Sprintf(c.baseURL, c.accountID)
 
 	// HTTP isteği hazırla
 	req, err := http.NewRequest("POST", cloudflareURL, formBuf)
@@ -141,7 +143,7 @@ func (c *CloudflareImages) UploadWithFilename(reader io.Reader, filename string)
 	req.Header.Set("Authorization", "Bearer "+c.apiToken)
 
 	// İsteği gönder
-	resp, err := c.client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to send request: %w", err)
 	}
@@ -166,15 +168,15 @@ func (c *CloudflareImages) UploadWithFilename(reader io.Reader, filename string)
 
 	// Create variant URLs
 	variantURLs := []string{
-		c.GetVariantURL(response.Result.ID, VariantPublic),
-		c.GetVariantURL(response.Result.ID, VariantThumbnail),
+		c.GetPublicURL(response.Result.ID),
+		c.GetThumbnailURL(response.Result.ID),
 	}
 
 	return response.Result.ID, variantURLs, nil
 }
 
 func (c *CloudflareImages) Delete(imageID string) error {
-	url := fmt.Sprintf("%s/accounts/%s/images/v1/%s", c.baseURL, c.accountID, imageID)
+	url := fmt.Sprintf(c.baseURL+"/%s", c.accountID, imageID)
 
 	req, err := http.NewRequest("DELETE", url, nil)
 	if err != nil {
@@ -183,8 +185,7 @@ func (c *CloudflareImages) Delete(imageID string) error {
 
 	req.Header.Set("Authorization", "Bearer "+c.apiToken)
 
-	// Optimize edilmiş client'ı kullan
-	resp, err := c.client.Do(req)
+	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return err
 	}
@@ -198,13 +199,9 @@ func (c *CloudflareImages) Delete(imageID string) error {
 }
 
 func (c *CloudflareImages) GetPublicURL(imageID string) string {
-	return fmt.Sprintf("https://imagedelivery.net/%s/%s/public", c.accountHash, imageID)
-}
-
-func (c *CloudflareImages) GetVariantURL(imageID string, variant string) string {
-	return fmt.Sprintf("https://imagedelivery.net/%s/%s/%s", c.accountHash, imageID, variant)
+	return fmt.Sprintf("https://imagedelivery.net/%s/%s/%s", c.accountHash, imageID, VariantPublic)
 }
 
 func (c *CloudflareImages) GetThumbnailURL(imageID string) string {
-	return c.GetVariantURL(imageID, VariantThumbnail)
+	return fmt.Sprintf("https://imagedelivery.net/%s/%s/%s", c.accountHash, imageID, VariantThumbnail)
 }

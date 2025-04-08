@@ -56,10 +56,6 @@ func main() {
 	purchaseRepo := repository.NewUserCreditPurchaseRepository(db)
 
 	// Storage services
-	r2Storage, err := storage.NewCloudflareStorage(cfg)
-	if err != nil {
-		log.Fatal("Failed to initialize R2 storage:", err)
-	}
 	imgStorage := storage.NewCloudflareImages(
 		cfg.CloudflareImages.AccountID,
 		cfg.CloudflareImages.Token,
@@ -75,7 +71,6 @@ func main() {
 	photoService := service.NewPhotoService(
 		photoRepo,
 		eventRepo,
-		r2Storage,
 		imgStorage,
 		userRepo,
 	)
@@ -103,7 +98,7 @@ func main() {
 	authHandler := handler.NewAuthHandler(authService)
 	eventHandler := handler.NewEventHandler(eventService, userService, validator)
 	userHandler := handler.NewUserHandler(userService)
-	photoHandler := handler.NewPhotoHandler(photoService)
+	photoHandler := handler.NewPhotoHandler(photoService, eventService)
 	paymentHandler := handler.NewPaymentHandler(paymentService)
 	packageService := service.NewPackageService(packageRepo)
 	creditPackageHandler := handler.NewCreditPackageHandler(packageService)
@@ -149,7 +144,7 @@ func main() {
 	api.Get("/gallery/:url", photoHandler.GetPublicEventPhotos)
 
 	// Public photo routes (authentication middleware'den ÖNCE olmalı)
-	api.Post("/events/photos", photoHandler.UploadPhoto)
+	api.Post("/events/guest-upload/:url", photoHandler.UploadPhoto)
 
 	// Stripe webhook (public)
 	api.Post("/payments/webhook", paymentHandler.HandleStripeWebhook)
@@ -169,15 +164,15 @@ func main() {
 		events := api.Group("/events")
 		events.Post("/", eventHandler.CreateEvent)
 		events.Get("/", eventHandler.GetUserEvents)
-		events.Get("/:id", eventHandler.GetEvent)
-		events.Put("/:id", eventHandler.UpdateEvent)
-		events.Delete("/:id", eventHandler.DeleteEvent)
-		events.Post("/:eventId/photos", eventHandler.UploadEventPhotos)
-		events.Get("/:id/qrcode", eventHandler.GetEventQRCode)
+		events.Get("/detail/:url", eventHandler.GetEvent)
+		events.Put("/:url", eventHandler.UpdateEvent)
+		events.Delete("/:url", eventHandler.DeleteEvent)
+		events.Post("/:url/photos", eventHandler.UploadEventPhotos)
+		events.Get("/:url/qrcode", eventHandler.GetEventQRCode)
 
 		// Photo routes
 		photos := api.Group("/photos")
-		photos.Get("/event/:eventId", photoHandler.GetEventPhotos)
+		photos.Get("/event/:url", photoHandler.GetEventPhotos)
 		photos.Delete("/:id", photoHandler.DeletePhoto)
 
 		// Payment routes (protected)

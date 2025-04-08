@@ -5,13 +5,12 @@ import (
 )
 
 type Photos struct {
-	ID         uint      `json:"id" gorm:"primaryKey"`
+	ID         uint      `gorm:"primaryKey" json:"id"`
 	EventID    uint      `json:"event_id"`
 	UserID     uint      `json:"user_id"`
 	FileName   string    `json:"file_name"`
 	FileSize   int64     `json:"file_size"`
 	MimeType   string    `json:"mime_type"`
-	R2Key      string    `json:"r2_key"`
 	ImageID    string    `json:"image_id"`
 	PublicURL  string    `json:"public_url"`
 	IsGuest    bool      `json:"is_guest"`
