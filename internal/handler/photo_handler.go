@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"fmt"
 	"strconv"
+	"time"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/sefazor/ourphotos-backend/internal/models"
@@ -72,6 +74,11 @@ func (h *PhotoHandler) UploadPhoto(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse("Guest uploads are not allowed for this event"))
 	}
 
+	// Etkinlik süresi dolmuş mu kontrol et
+	if time.Now().After(event.ExpiresAt) {
+		return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse("This event has expired"))
+	}
+
 	file, err := c.FormFile("file")
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("No file uploaded"))
@@ -103,6 +110,26 @@ func (h *PhotoHandler) DeletePhoto(c *fiber.Ctx) error {
 func (h *PhotoHandler) GetPublicEventPhotos(c *fiber.Ctx) error {
 	eventURL := c.Params("url")
 
+	// Önce etkinliği al
+	event, err := h.eventService.GetEventByURL(eventURL)
+	if err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(models.ErrorResponse("Event not found"))
+	}
+
+	// Etkinlik public değilse erişimi engelle
+	if !event.IsPublic {
+		return c.Status(fiber.StatusForbidden).JSON(models.ErrorResponse("This event is private"))
+	}
+
+	// Etkinlik parola korumalıysa, cookie kontrolü yap
+	if event.HasPassword {
+		cookie := c.Cookies(fmt.Sprintf("event_%s_access", eventURL))
+		if cookie != "true" {
+			return c.Status(fiber.StatusUnauthorized).JSON(models.ErrorResponse("This event requires a password"))
+		}
+	}
+
+	// Sadece public ve izin verilen etkinliklerin fotoğraflarını getir
 	photos, err := h.photoService.GetPublicEventPhotos(eventURL)
 	if err != nil {
 		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse(err.Error()))

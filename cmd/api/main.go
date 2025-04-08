@@ -26,9 +26,9 @@ import (
 )
 
 func main() {
-	// Load .env
+	// .env dosyasını yüklemeye çalış ama bulunamazsa devam et
 	if err := godotenv.Load(); err != nil {
-		log.Fatal("Error loading .env file")
+		log.Println("Warning: .env file not found, using environment variables")
 	}
 
 	// Config'i yükle
@@ -125,6 +125,16 @@ func main() {
 			return c.IP()
 		},
 	}))
+
+	// Health check endpoint (API grubunun dışında, ana seviyede)
+	app.Get("/health", func(c *fiber.Ctx) error {
+		return c.JSON(fiber.Map{
+			"status":    "ok",
+			"message":   "Service is running",
+			"version":   "1.0.0",
+			"timestamp": time.Now().Format(time.RFC3339),
+		})
+	})
 
 	api := app.Group("/api")
 

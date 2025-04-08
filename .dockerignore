@@ -1,0 +1,25 @@
+# flyctl launch added from .gitignore
+# IDE files
+**/.idea
+**/.vscode
+
+# Environment variables
+**/.env
+
+# Binary files
+**/bin
+**/*.exe
+
+# Go specific
+**/*.test
+**/*.out
+vendor
+
+# Temporary files
+**/*.tmp
+**/*.log
+
+# OS specific
+**/.DS_Store
+**/Thumbs.db
+fly.toml

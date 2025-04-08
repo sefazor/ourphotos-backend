@@ -21,3 +21,15 @@ bin/
 # OS specific
 .DS_Store
 Thumbs.db
+
+
+dockerfile 
+docker-compose.yml
+docker-compose.override.yml
+docker-compose.override.yml.example
+docker-compose.override.yml.example
+docker-compose.override.yml.example
+docker-compose.override.yml.example
+docker-compose.override.yml.example
+
+fly.toml
