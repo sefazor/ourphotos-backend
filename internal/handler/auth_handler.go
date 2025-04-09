@@ -4,6 +4,7 @@ import (
 	"github.com/gofiber/fiber/v2"
 	"github.com/sefazor/ourphotos-backend/internal/models"
 	"github.com/sefazor/ourphotos-backend/internal/service"
+	"github.com/sefazor/ourphotos-backend/pkg/captcha"
 )
 
 type AuthHandler struct {
@@ -22,6 +23,16 @@ func (h *AuthHandler) Register(c *fiber.Ctx) error {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
 	}
 
+	// Turnstile doğrulama
+	isValid, err := captcha.VerifyTurnstile(req.TurnstileToken)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("Error verifying CAPTCHA: " + err.Error()))
+	}
+
+	if !isValid {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("CAPTCHA verification failed"))
+	}
+
 	user, err := h.authService.Register(req)
 	if err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse(err.Error()))
@@ -34,6 +45,16 @@ func (h *AuthHandler) Login(c *fiber.Ctx) error {
 	var req models.LoginRequest
 	if err := c.BodyParser(&req); err != nil {
 		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("Invalid request body"))
+	}
+
+	// Turnstile doğrulama
+	isValid, err := captcha.VerifyTurnstile(req.TurnstileToken)
+	if err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(models.ErrorResponse("Error verifying CAPTCHA: " + err.Error()))
+	}
+
+	if !isValid {
+		return c.Status(fiber.StatusBadRequest).JSON(models.ErrorResponse("CAPTCHA verification failed"))
 	}
 
 	token, err := h.authService.Login(req)

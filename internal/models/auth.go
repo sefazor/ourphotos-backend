@@ -1,14 +1,16 @@
 package models
 
 type RegisterRequest struct {
-	FullName string `json:"full_name" validate:"required"`
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required,min=6"`
+	FullName       string `json:"full_name" validate:"required"`
+	Email          string `json:"email" validate:"required,email"`
+	Password       string `json:"password" validate:"required,min=8"`
+	TurnstileToken string `json:"cf-turnstile-response" validate:"required"`
 }
 
 type LoginRequest struct {
-	Email    string `json:"email" validate:"required,email"`
-	Password string `json:"password" validate:"required"`
+	Email          string `json:"email" validate:"required,email"`
+	Password       string `json:"password" validate:"required"`
+	TurnstileToken string `json:"cf-turnstile-response" validate:"required"`
 }
 
 type ForgotPasswordRequest struct {

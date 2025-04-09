@@ -2,22 +2,24 @@ package email
 
 import (
 	"bytes"
+	"embed"
 	"html/template"
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/resendlabs/resend-go"
 )
 
+//go:embed templates/*.html
+var templateFS embed.FS
+
 type EmailService struct {
-	client       *resend.Client
-	from         string
-	fromName     string
-	templatesDir string
-	logger       *log.Logger
+	client   *resend.Client
+	from     string
+	fromName string
+	logger   *log.Logger
 }
 
 func NewEmailService() *EmailService {
@@ -27,11 +29,10 @@ func NewEmailService() *EmailService {
 		log.Printf("Error opening log file: %v", err)
 		// Hata durumunda stdout'a log al
 		return &EmailService{
-			client:       resend.NewClient(os.Getenv("RESEND_API_KEY")),
-			from:         os.Getenv("EMAIL_FROM_ADDRESS"),
-			fromName:     os.Getenv("EMAIL_FROM_NAME"),
-			templatesDir: "pkg/email/templates",
-			logger:       log.New(os.Stdout, "EMAIL: ", log.LstdFlags),
+			client:   resend.NewClient(os.Getenv("RESEND_API_KEY")),
+			from:     os.Getenv("EMAIL_FROM_ADDRESS"),
+			fromName: os.Getenv("EMAIL_FROM_NAME"),
+			logger:   log.New(os.Stdout, "EMAIL: ", log.LstdFlags),
 		}
 	}
 
@@ -39,11 +40,10 @@ func NewEmailService() *EmailService {
 	multiWriter := io.MultiWriter(os.Stdout, logFile)
 
 	return &EmailService{
-		client:       resend.NewClient(os.Getenv("RESEND_API_KEY")),
-		from:         os.Getenv("EMAIL_FROM_ADDRESS"),
-		fromName:     os.Getenv("EMAIL_FROM_NAME"),
-		templatesDir: "pkg/email/templates",
-		logger:       log.New(multiWriter, "EMAIL: ", log.LstdFlags),
+		client:   resend.NewClient(os.Getenv("RESEND_API_KEY")),
+		from:     os.Getenv("EMAIL_FROM_ADDRESS"),
+		fromName: os.Getenv("EMAIL_FROM_NAME"),
+		logger:   log.New(multiWriter, "EMAIL: ", log.LstdFlags),
 	}
 }
 
@@ -56,7 +56,7 @@ func (s *EmailService) SendWelcomeEmail(email, fullName string) error {
 		"Year":     time.Now().Year(),
 	}
 
-	html, err := s.parseTemplate("welcome.html", templateData)
+	html, err := s.parseTemplate("templates/welcome.html", templateData)
 	if err != nil {
 		s.logger.Printf("Error parsing welcome template for %s: %v", email, err)
 		return err
@@ -90,7 +90,7 @@ func (s *EmailService) SendPasswordResetEmail(email string, resetToken string) e
 		"Year":      time.Now().Year(),
 	}
 
-	html, err := s.parseTemplate("reset-password.html", templateData)
+	html, err := s.parseTemplate("templates/reset-password.html", templateData)
 	if err != nil {
 		s.logger.Printf("Error parsing reset password template for %s: %v", email, err)
 		return err
@@ -120,7 +120,7 @@ func (s *EmailService) SendEmailChangeVerification(email, token string) error {
 		"Year":             time.Now().Year(),
 	}
 
-	html, err := s.parseTemplate("verify-email.html", templateData)
+	html, err := s.parseTemplate("templates/verify-email.html", templateData)
 	if err != nil {
 		return err
 	}
@@ -148,7 +148,7 @@ func (s *EmailService) SendVerificationEmail(email, fullName, token string) erro
 		"Year":             time.Now().Year(),
 	}
 
-	html, err := s.parseTemplate("verify-email.html", templateData)
+	html, err := s.parseTemplate("templates/verify-email.html", templateData)
 	if err != nil {
 		s.logger.Printf("Error parsing verification template for %s: %v", email, err)
 		return err
@@ -172,11 +172,10 @@ func (s *EmailService) SendVerificationEmail(email, fullName, token string) erro
 }
 
 func (s *EmailService) parseTemplate(templateName string, data interface{}) (string, error) {
-	templatePath := filepath.Join(s.templatesDir, templateName)
+	s.logger.Printf("Parsing template: %s", templateName)
 
-	s.logger.Printf("Parsing template: %s", templatePath)
-
-	tmpl, err := template.ParseFiles(templatePath)
+	// Embedded template dosyasını yükle
+	tmpl, err := template.ParseFS(templateFS, templateName)
 	if err != nil {
 		s.logger.Printf("Error parsing template %s: %v", templateName, err)
 		return "", err

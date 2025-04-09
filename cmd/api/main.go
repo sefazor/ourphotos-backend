@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
 	"time"
@@ -118,13 +119,93 @@ func main() {
 		AllowCredentials: true,
 	}))
 	app.Use(logger.New())
-	app.Use(limiter.New(limiter.Config{
+
+	// Rate Limiting Middleware'leri
+
+	// 1. Çok hassas işlemler için sıkı limit
+	authLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: 1 * time.Hour,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			// IP bazlı sınırlama
+			return c.IP() + "_auth"
+		},
+		LimitReached: func(c *fiber.Ctx) error {
+			return c.Status(fiber.StatusTooManyRequests).JSON(models.ErrorResponse(
+				"Too many authentication attempts. Please try again later.",
+			))
+		},
+	})
+
+	// 2. Ödeme işlemleri için özel limit
+	paymentLimiter := limiter.New(limiter.Config{
+		Max:        10,
+		Expiration: 1 * time.Hour,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			// Kullanıcı ID bazlı sınırlama (oturum açmış kullanıcılar için)
+			if userID := c.Locals("userID"); userID != nil {
+				return fmt.Sprintf("payment_user_%v", userID)
+			}
+			return c.IP() + "_payment"
+		},
+	})
+
+	// 3. Veri değiştirme işlemleri için limit
+	writeLimiter := limiter.New(limiter.Config{
 		Max:        20,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			if userID := c.Locals("userID"); userID != nil {
+				return fmt.Sprintf("write_user_%v", userID)
+			}
+			return c.IP() + "_write"
+		},
+	})
+
+	// 4. Okuma işlemleri için esnek limit
+	readLimiter := limiter.New(limiter.Config{
+		Max:        60,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			if userID := c.Locals("userID"); userID != nil {
+				return fmt.Sprintf("read_user_%v", userID)
+			}
+			return c.IP() + "_read"
+		},
+	})
+
+	// 5. Fotoğraf yükleme için özel yüksek limit
+	uploadLimiter := limiter.New(limiter.Config{
+		Max:        50,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			if userID := c.Locals("userID"); userID != nil {
+				return fmt.Sprintf("upload_user_%v", userID)
+			}
+			return c.IP() + "_upload"
+		},
+	})
+
+	// 6. Public erişim için çok yüksek limit
+	publicLimiter := limiter.New(limiter.Config{
+		Max:        200,
+		Expiration: 1 * time.Minute,
+		KeyGenerator: func(c *fiber.Ctx) string {
+			return c.IP() + "_public"
+		},
+	})
+
+	// Global rate limiter (varsayılan olarak tüm endpoint'ler için)
+	globalLimiter := limiter.New(limiter.Config{
+		Max:        100,
 		Expiration: 1 * time.Minute,
 		KeyGenerator: func(c *fiber.Ctx) string {
 			return c.IP()
 		},
-	}))
+	})
+
+	// Global limiter'ı uygula
+	app.Use(globalLimiter)
 
 	// Health check endpoint (API grubunun dışında, ana seviyede)
 	app.Get("/health", func(c *fiber.Ctx) error {
@@ -140,60 +221,60 @@ func main() {
 
 	// Public routes
 	auth := api.Group("/auth")
-	auth.Post("/register", authHandler.Register)
-	auth.Post("/login", authHandler.Login)
-	auth.Post("/forgot-password", authHandler.ForgotPassword)
-	auth.Post("/reset-password", authHandler.ResetPassword)
-	auth.Post("/verify-email", authHandler.VerifyEmail)
-	auth.Post("/resend-verification", authHandler.ResendVerificationEmail)
-	auth.Post("/complete-email-change", userHandler.CompleteEmailChange)
+	auth.Post("/register", authLimiter, authHandler.Register)
+	auth.Post("/login", authLimiter, authHandler.Login)
+	auth.Post("/forgot-password", authLimiter, authHandler.ForgotPassword)
+	auth.Post("/reset-password", authLimiter, authHandler.ResetPassword)
+	auth.Post("/verify-email", authLimiter, authHandler.VerifyEmail)
+	auth.Post("/resend-verification", authLimiter, authHandler.ResendVerificationEmail)
+	auth.Post("/complete-email-change", authLimiter, userHandler.CompleteEmailChange)
 
 	// Public event routes
-	api.Get("/events/:url", eventHandler.GetEventByURL)
-	api.Post("/events/url/:url/check-password", eventHandler.CheckEventPassword)
-	api.Get("/gallery/:url", photoHandler.GetPublicEventPhotos)
+	api.Get("/events/:url", publicLimiter, eventHandler.GetEventByURL)
+	api.Post("/events/url/:url/check-password", authLimiter, eventHandler.CheckEventPassword)
+	api.Get("/gallery/:url", publicLimiter, photoHandler.GetPublicEventPhotos)
 
 	// Public photo routes (authentication middleware'den ÖNCE olmalı)
-	api.Post("/events/guest-upload/:url", photoHandler.UploadPhoto)
+	api.Post("/events/guest-upload/:url", uploadLimiter, photoHandler.UploadPhoto)
 
 	// Stripe webhook (public)
 	api.Post("/payments/webhook", paymentHandler.HandleStripeWebhook)
 
 	// Public routes (auth middleware'den ÖNCE olmalı)
-	api.Get("/payments/packages", paymentHandler.GetCreditPackages)
+	api.Get("/payments/packages", publicLimiter, paymentHandler.GetCreditPackages)
 
 	// Protected routes
 	api.Use(middleware.AuthMiddleware())
 	{
 		user := api.Group("/user")
-		user.Get("/profile", userHandler.GetMyProfile)
-		user.Put("/profile", userHandler.UpdateProfile)
-		user.Post("/change-password", userHandler.ChangePassword)
-		user.Post("/change-email", userHandler.InitiateEmailChange)
+		user.Get("/profile", readLimiter, userHandler.GetMyProfile)
+		user.Put("/profile", writeLimiter, userHandler.UpdateProfile)
+		user.Post("/change-password", authLimiter, userHandler.ChangePassword)
+		user.Post("/change-email", authLimiter, userHandler.InitiateEmailChange)
 
 		events := api.Group("/events")
-		events.Post("/", eventHandler.CreateEvent)
-		events.Get("/", eventHandler.GetUserEvents)
-		events.Get("/detail/:url", eventHandler.GetEvent)
-		events.Put("/:url", eventHandler.UpdateEvent)
-		events.Delete("/:url", eventHandler.DeleteEvent)
-		events.Post("/:url/photos", eventHandler.UploadEventPhotos)
-		events.Get("/:url/qrcode", eventHandler.GetEventQRCode)
+		events.Post("/", writeLimiter, eventHandler.CreateEvent)
+		events.Get("/", readLimiter, eventHandler.GetUserEvents)
+		events.Get("/detail/:url", readLimiter, eventHandler.GetEvent)
+		events.Put("/:url", writeLimiter, eventHandler.UpdateEvent)
+		events.Delete("/:url", writeLimiter, eventHandler.DeleteEvent)
+		events.Post("/:url/photos", uploadLimiter, eventHandler.UploadEventPhotos)
+		events.Get("/:url/qrcode", readLimiter, eventHandler.GetEventQRCode)
 
 		// Photo routes
 		photos := api.Group("/photos")
-		photos.Get("/event/:url", photoHandler.GetEventPhotos)
-		photos.Delete("/:id", photoHandler.DeletePhoto)
+		photos.Get("/event/:url", readLimiter, photoHandler.GetEventPhotos)
+		photos.Delete("/:id", writeLimiter, photoHandler.DeletePhoto)
 
 		// Payment routes (protected)
 		payments := api.Group("/payments")
-		payments.Get("/history", paymentHandler.GetPurchaseHistory)
-		payments.Post("/checkout/:packageId", paymentHandler.CreateCheckoutSession)
+		payments.Get("/history", readLimiter, paymentHandler.GetPurchaseHistory)
+		payments.Post("/checkout/:packageId", paymentLimiter, paymentHandler.CreateCheckoutSession)
 
 		// Credit package routes
 		packages := api.Group("/packages")
-		packages.Get("/", creditPackageHandler.GetAllPackages)
-		packages.Get("/:id", creditPackageHandler.GetPackageByID)
+		packages.Get("/", readLimiter, creditPackageHandler.GetAllPackages)
+		packages.Get("/:id", readLimiter, creditPackageHandler.GetPackageByID)
 	}
 
 	// Start server
